@@ -10,3 +10,4 @@
 | 2026-10-03 | Embeddings computed on one EC2 g6.xlarge (vLLM), searched exactly on the laptop GPU | AWS credits; vLLM vectors verified equal to sentence-transformers (cosine ~1.000). |
 | 2026-10-03 | Reranker: Qwen3-Reranker-0.6B | Same family as the embedder; fits the laptop GPU for dev runs. |
 | 2026-10-03 | Tracing: Langfuse Cloud (free tier) via OpenTelemetry | No ops; demo can link to traces. |
+| 2026-10-03 | Near-dup clustering: MinHash on text (word shingles + LSH); threshold picked from the measured distribution and inspected samples | Matches the stated job (copies differing in small facts); cheap, deterministic, explainable. |
