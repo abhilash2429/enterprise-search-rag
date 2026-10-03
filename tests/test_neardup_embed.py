@@ -3,7 +3,7 @@ import pyarrow as pa
 import pyarrow.parquet as pq
 
 from entsearch.index.neardup import clusters
-from entsearch.index.neardup_embed import doc_vectors, knn_pairs
+from entsearch.index.neardup_embed import VersionPairs, doc_vectors, knn_pairs
 
 
 def _unit(v):
@@ -34,3 +34,14 @@ def test_knn_pairs_find_near_copies_only():
     assert (pairs["i"] < pairs["j"]).all()
     c = clusters(len(vecs), pairs, 0.9, field="cos")
     assert all(c[k] == c[50 + k] for k in range(5)) and len(set(c)) == 50
+
+
+def test_version_pairs_do_not_chain(tmp_path):
+    a = np.array([1.0, 0.0])
+    b = _unit(np.array([1.0, 0.5]))
+    c = _unit(np.array([1.0, 1.1]))
+    np.save(tmp_path / "doc_vecs_mean.npy", np.stack([a, b, c]).astype(np.float16))
+    (tmp_path / "doc_ids.txt").write_text("a\nb\nc\n", encoding="utf8")
+    vp = VersionPairs(tmp_path, threshold=0.88)
+    assert {(x, y) for x, y, _ in vp(["a", "b", "c"])} == {("a", "b"), ("b", "c")}
+    assert vp(["c", "a"]) == []

@@ -3,6 +3,8 @@
   --analyze    cosine of labeled pairs per pooling and split (positives: conflicting_info gold pairs,
                hard negatives: completeness and project_related gold pairs). Pick pooling and threshold on dev.
   --build      kNN pairs for one pooling, cluster stats at several thresholds, sample pairs per band.
+  --vectors    save pooled doc vectors for query-time version flagging.
+  --retrieved  version pairs flagged inside each run's top-10 on dev questions.
 """
 import argparse
 import itertools
@@ -13,7 +15,9 @@ import pyarrow.parquet as pq
 
 from entsearch.data import CORPUS, SPLITS, load_questions
 from entsearch.index.neardup import clusters
-from entsearch.index.neardup_embed import OUT, doc_vectors, knn_pairs, pair_cosines
+from entsearch.answer import read_jsonl
+from entsearch.data import ROOT
+from entsearch.index.neardup_embed import OUT, VersionPairs, doc_vectors, knn_pairs, pair_cosines, save_doc_vectors
 
 POSITIVE_TYPES = ("conflicting_info",)
 NEGATIVE_TYPES = ("completeness", "project_related")
@@ -82,10 +86,36 @@ def build(pooling: str, floor: float) -> None:
     print("\n".join(lines[:14]))
 
 
+def retrieved(runs: list[str]) -> None:
+    vp = VersionPairs()
+    q = load_questions()
+    dev = set((SPLITS / "dev.txt").read_text().split())
+    q = q[q.question_id.isin(dev)].set_index("question_id")
+    for run in runs:
+        flags, gold_flagged, gold_both = [], 0, 0
+        for r in read_jsonl(ROOT / "runs" / run / "retrieval.jsonl"):
+            if r["question_id"] not in q.index:
+                continue
+            docs = list(dict.fromkeys(r["document_ids"]))[:10]
+            pairs = vp(docs)
+            flags.append(len(pairs))
+            row = q.loc[r["question_id"]]
+            if row.question_type in POSITIVE_TYPES:
+                gold = set(row.expected_doc_ids)
+                if len(gold & set(docs)) >= 2:
+                    gold_both += 1
+                    gold_flagged += any(a in gold and b in gold for a, b, _ in pairs)
+        f = np.array(flags)
+        print(f"{run}: dev n={len(f)}  flagged pairs per top-10 mean {f.mean():.2f}  questions with >=1 flag {(f > 0).mean():.2f}  "
+              f"conflicting_info with both versions retrieved {gold_both}, flagged {gold_flagged}")
+
+
 def main() -> None:
     p = argparse.ArgumentParser()
     p.add_argument("--analyze", action="store_true")
     p.add_argument("--build", action="store_true")
+    p.add_argument("--vectors", action="store_true")
+    p.add_argument("--retrieved", nargs="*")
     p.add_argument("--pooling", choices=["mean", "first"], default="mean")
     p.add_argument("--floor", type=float, default=0.8)
     args = p.parse_args()
@@ -93,6 +123,10 @@ def main() -> None:
         analyze()
     if args.build:
         build(args.pooling, args.floor)
+    if args.vectors:
+        save_doc_vectors(args.pooling)
+    if args.retrieved:
+        retrieved(args.retrieved)
 
 
 if __name__ == "__main__":
