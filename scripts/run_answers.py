@@ -5,6 +5,7 @@ import pandas as pd
 
 from entsearch.answer import answer_run, read_jsonl
 from entsearch.data import ROOT, load_questions
+from entsearch import tracing
 from entsearch.harness import metrics_eval
 
 p = argparse.ArgumentParser()
@@ -20,7 +21,11 @@ q = load_questions(args.split)
 if args.limit:
     q = q.groupby("question_type", group_keys=False).head(max(1, args.limit // q.question_type.nunique())).head(args.limit)
 
-answer_run(run_dir, q, workers=args.workers)
+print("langfuse export on" if tracing.init(args.run) else "langfuse export off (no keys); spans -> runs/<run>/spans.jsonl")
+try:
+    answer_run(run_dir, q, workers=args.workers)
+finally:
+    tracing.shutdown()
 if not args.skip_eval:
     metrics_eval(run_dir, q, parallelism=args.workers)
 

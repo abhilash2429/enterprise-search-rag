@@ -8,7 +8,7 @@ from pathlib import Path
 import pandas as pd
 from tqdm import tqdm
 
-from entsearch import llm
+from entsearch import llm, tracing
 from entsearch.data import load_docs
 from entsearch.harness import harness_import
 
@@ -43,7 +43,13 @@ def answer_run(run_dir: Path, questions: pd.DataFrame, workers: int = 8) -> None
     def one(row) -> None:
         ids = retrieved[row.question_id]
         prompt = prompt_tpl.format(context_documents=format_context(ids, docs), question=row.question)
-        gen = llm.generate(client, prompt)
+        with tracing.question_span(run_dir.name, row.question_id, row.question_type) as root:
+            root.set_attribute("langfuse.observation.input", json.dumps(row.question))
+            with tracing.span("generate") as s:
+                tracing.record_hits(s, ids, row.expected_doc_ids)
+                gen = llm.generate(client, prompt)
+                tracing.record_llm(s, llm.MODEL, gen.input_tokens, gen.output_tokens, gen.reasoning_tokens, gen.cost, gen.cached)
+                s.set_attribute("langfuse.observation.output", json.dumps(gen.text))
         with lock:
             with open(run_dir / "answers.jsonl", "a", encoding="utf8") as f:
                 f.write(json.dumps({"question_id": row.question_id, "answer": gen.text, "document_ids": ids}) + "\n")
