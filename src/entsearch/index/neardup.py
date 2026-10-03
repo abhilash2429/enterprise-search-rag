@@ -90,8 +90,8 @@ def candidate_pairs(sigs: np.ndarray, floor: float) -> np.ndarray:
     return pairs
 
 
-def clusters(n: int, pairs: np.ndarray, threshold: float) -> np.ndarray:
-    """Union-find over pairs with jaccard >= threshold. Returns a cluster id per doc (the root's index)."""
+def clusters(n: int, pairs: np.ndarray, threshold: float, field: str = "jaccard") -> np.ndarray:
+    """Union-find over pairs with pairs[field] >= threshold. Returns a cluster id per doc (the root's index)."""
     parent = np.arange(n)
 
     def find(x: int) -> int:
@@ -100,7 +100,7 @@ def clusters(n: int, pairs: np.ndarray, threshold: float) -> np.ndarray:
             x = parent[x]
         return x
 
-    for i, j in pairs[pairs["jaccard"] >= threshold][["i", "j"]]:
+    for i, j in pairs[pairs[field] >= threshold][["i", "j"]]:
         ri, rj = find(int(i)), find(int(j))
         if ri != rj:
             parent[max(ri, rj)] = min(ri, rj)

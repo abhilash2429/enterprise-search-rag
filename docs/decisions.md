@@ -11,3 +11,4 @@
 | 2026-10-03 | Reranker: Qwen3-Reranker-0.6B | Same family as the embedder; fits the laptop GPU for dev runs. |
 | 2026-10-03 | Tracing: Langfuse Cloud (free tier) via OpenTelemetry | No ops; demo can link to traces. |
 | 2026-10-03 | Near-dup clustering: MinHash on text (word shingles + LSH); threshold picked from the measured distribution and inspected samples | Matches the stated job (copies differing in small facts); cheap, deterministic, explainable. |
+| 2026-10-04 | Near-dup method switched to embedding similarity over doc vectors | MinHash found 1/722 gold docs with a near-dup; known version pairs have Jaccard 0.01-0.16 (results/neardup_minhash.md). Threshold tuned on dev-question pairs only. |
