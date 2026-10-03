@@ -1,34 +1,119 @@
 # enterprise-search-rag
 
-Retrieval-augmented question answering over [EnterpriseRAG-Bench](https://huggingface.co/datasets/onyx-dot-app/EnterpriseRAG-Bench)
-(Onyx, arXiv 2605.05253, MIT): 511,958 synthetic company documents from 9 sources (Slack, email, tickets, docs, ...) and 500 questions.
+Retrieval-augmented question answering over a 512K-document synthetic company corpus, measured against a published benchmark.
 
-Work in progress. The goal is hybrid retrieval (BM25 + dense + reranking) with cited answers and abstention, measured with
-ablations, paired bootstrap CIs, and an LLM judge validated against hand labels.
+- Benchmark: [EnterpriseRAG-Bench](https://huggingface.co/datasets/onyx-dot-app/EnterpriseRAG-Bench) (Onyx, arXiv 2605.05253, MIT). 511,958 docs from 9 sources (Slack, email, tickets, docs, ...), 500 questions in 10 types.
+- Headline: the paper's BM25 baseline reproduced exactly. Recall@10 = 68.4 overall and in every question type, to the decimal.
+- End to end on all 500 questions with `gpt-oss-120b` as generator and judge: correctness 68.0 at $0.0046 per question ($2.30 total).
+- The LLM judge is validated against 100 blind hand labels: TPR 0.91, TNR 0.94.
+- Status: work in progress. BM25 baseline, judge validation and tracing are done. Dense embeddings are being computed; dense results, hybrid retrieval and reranking are next.
 
-## Results so far
+## Results
 
-| System | Recall@10 | Correctness | Completeness | Overall | $/question |
-|---|---|---|---|---|---|
-| BM25 (OpenSearch, paper config), this repo | 68.4 | 68.0 | 53.3 | 47.2 | 0.0046 |
-| BM25 + GPT-5.4, paper | 68.4 | 68.8 | 56.0 | 50.6 | - |
+All 500 questions. Harness `metrics_based_eval --no-correction`.
 
-Generator and judge here are `gpt-oss-120b`; the paper uses GPT-5.4 for both, so only recall is directly comparable.
-Recall matches the paper in every question type. Judge vs 100 hand labels: TPR 0.91, TNR 0.94.
-Details: [results/](results/), decisions: [docs/decisions.md](docs/decisions.md).
+| System | Recall@10 | Correctness | Completeness | Overall | Invalid extra docs | $/question |
+|---|---|---|---|---|---|---|
+| BM25 (OpenSearch, paper config) + gpt-oss-120b, this repo | 68.4 | 68.0 | 53.3 | 47.2 | 9.0 | 0.0046 |
+| BM25 + GPT-5.4, paper | 68.4 | 68.8 | 56.0 | 50.6 | 9.0 | n/a |
+| Dense, Qwen3-Embedding-0.6B, this repo | in progress | | | | | |
+| Dense baseline, paper | 46.0 | | | | | |
 
-## Layout
+The paper uses GPT-5.4 as generator and judge. This repo uses `openai.gpt-oss-120b` on Bedrock for both, so only recall is directly
+comparable across the two rows. Judge-based scores are compared only between systems in this repo, all scored by the same judge.
+Per-type breakdown: [results/bm25_baseline.md](results/bm25_baseline.md).
 
-- `src/entsearch/`: data loading, split, tokenizer, sparse and dense indexes, near-dup detection, LLM client, tracing
-- `scripts/`: runnable steps (indexing, retrieval, answering, judging, reports, labeling tool)
-- `tests/`: unit tests (BM25 and metrics tests run against stubs until those are hand-written)
-- `third_party/erb`: the benchmark harness, fetched by `scripts/fetch_harness.sh` (not committed)
+## Findings
+
+**Reproduction.** OpenSearch 2.19.1 with the harness's exact index settings and query gives recall@10 of 68.4, matching the paper overall
+and in each of the 8 question types that have gold documents. That pins the generator and judge as the only differences from the paper.
+
+**Judge validation.** I hand-labeled 100 dev answers blind (the labeling tool never shows the judge's verdict).
+
+| TPR | TNR | Agreement | Judge says correct | Hand label says correct |
+|---|---|---|---|---|
+| 0.912 (95% Wilson 0.82-0.96) | 0.938 (0.80-0.98) | 0.92 | 64% | 68% |
+
+The judge is slightly stricter than my labels, and accurate enough to rank systems against each other.
+
+**MinHash near-duplicate detection did not work on this corpus.** MinHash (5-word shingles, 128 permutations, LSH) found 3,856 pairs
+across 512K docs, mostly Slack dumps with shared boilerplate. Only 1 of 722 gold docs had a near-duplicate. Known version pairs of
+the same document have shingle Jaccard of 0.01 to 0.16: the corpus is LLM-generated, so versions are reworded and lexical overlap is low.
+I switched to embedding-similarity near-dup detection (built, results pending). Details: [results/neardup_minhash.md](results/neardup_minhash.md).
+
+Every design decision and its reason is logged in [docs/decisions.md](docs/decisions.md).
+
+## How it works
+
+1. **Split.** Stratified 150 dev / 350 test split by question type, seed 20261003 ([data/splits/](data/splits/)). Tuning happens on dev only.
+2. **Sparse retrieval.** Paper-faithful BM25 in OpenSearch. In parallel, an own tokenizer that matches Lucene's `standard` analyzer
+   token-for-token on 2,000 sampled docs feeds a streaming sparse TF index (1.86M terms, 177M nonzeros). A hand-written BM25 over that
+   index is in progress, with tests in place.
+3. **Dense retrieval.** Qwen3-Embedding-0.6B at full 1024 dims with the paper's chunking (512 cl100k tokens, 10% overlap, top-100 chunks
+   collapsed to top-10 docs). 1,538,921 chunks, being embedded with vLLM on one AWS L4 (in progress). Vectors from the first shard verified
+   equal to sentence-transformers (cosine ~1.000). Retrieval results not in yet.
+4. **Answering and judging.** Top-10 docs go into the harness's answer prompt, generated by `gpt-oss-120b` on Bedrock with a disk cache
+   keyed on the full request. The harness judge scores correctness, completeness and recall.
+5. **Tracing.** OpenTelemetry span per stage with latency, tokens, dollars and gold-doc survival. Always written to local JSONL,
+   exported to Langfuse when keys are set.
+
+## Repo layout
+
+```
+src/entsearch/
+  data.py, split.py        corpus/question loading, stratified dev/test split
+  analysis.py              Lucene-standard tokenizer
+  index/sparse.py          streaming docs x terms TF matrix
+  index/chunking.py        paper chunking (copied from the harness)
+  index/neardup*.py        MinHash and embedding-similarity near-dup detection
+  retrieval/opensearch.py  paper BM25 (harness settings and query)
+  retrieval/bm25.py        hand-written BM25 (in progress)
+  metrics.py               recall@k, MRR, nDCG (hand-written, in progress)
+  llm.py, answer.py        Bedrock client with cache, harness-equivalent answer generation
+  harness.py               wrapper for calling the benchmark harness
+  tracing.py               OpenTelemetry spans, JSONL + Langfuse
+scripts/
+  make_split.py, fetch_harness.sh
+  run_opensearch_bm25.py, build_sparse_index.py, run_own_bm25.py
+  embed_dense.py, run_dense.py
+  run_answers.py           generate answers and judge them
+  report_harness.py, eval_retrieval.py, stage_costs.py
+  label_server.py, judge_agreement.py   blind hand labeling and judge TPR/TNR
+  build_neardup.py, build_neardup_embed.py
+tests/                     unit tests (tokenizer, chunking, tracing, near-dup, BM25, metrics)
+results/                   committed result tables
+```
 
 ## Setup
 
+Python 3.11, [uv](https://docs.astral.sh/uv/), Docker, and AWS credentials with Bedrock access for answering and judging.
+
 ```bash
 uv sync
-bash scripts/fetch_harness.sh
+bash scripts/fetch_harness.sh          # pinned harness into third_party/erb (code only)
+docker compose up -d                   # OpenSearch 2.19.1 on :9200
 ```
 
-The corpus and questions come from the Hugging Face dataset into `data/erb/`.
+Download the Hugging Face dataset `onyx-dot-app/EnterpriseRAG-Bench` into `data/erb/`, so that
+`data/erb/data/documents/test.parquet` and `data/erb/data/questions/test.parquet` exist. Then:
+
+```bash
+uv run python scripts/run_opensearch_bm25.py            # index + top-10 for all 500 questions
+uv run python scripts/run_answers.py bm25_opensearch    # generate + judge
+uv run python scripts/report_harness.py bm25_opensearch
+```
+
+Optional: set `LANGFUSE_PUBLIC_KEY`, `LANGFUSE_SECRET_KEY`, `LANGFUSE_HOST` in `.env` to export traces.
+
+## Roadmap
+
+Planned, not built yet:
+
+- Dense retrieval results, then hybrid BM25 + dense with reciprocal rank fusion
+- Cross-encoder reranking (Qwen3-Reranker-0.6B)
+- Source router across the 9 document sources
+- Claim-level citations, abstention, and conflict handling for superseded documents
+- Agent fallback for questions single-shot retrieval misses
+- Paired bootstrap confidence intervals and an ablation table on dev, then one final run on the held-out test split
+- Frontier-agent baseline for comparison
+- MCP server and a hosted demo
