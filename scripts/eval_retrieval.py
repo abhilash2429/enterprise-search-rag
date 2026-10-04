@@ -17,12 +17,15 @@ PAPER_BM25_RECALL = {
 p = argparse.ArgumentParser()
 p.add_argument("runs", nargs="+")
 p.add_argument("--k", type=int, default=10)
+p.add_argument("--split", choices=["dev", "test"], help="score only this split (use dev while tuning, to keep test unseen)")
 args = p.parse_args()
 
 q = load_questions()
 dev = set((SPLITS / "dev.txt").read_text().split())
 q["split"] = q.question_id.map(lambda x: "dev" if x in dev else "test")
 q = q[q.expected_doc_ids.map(len) > 0]
+if args.split:
+    q = q[q.split == args.split]
 
 frames = []
 for run in args.runs:
@@ -37,13 +40,14 @@ for run in args.runs:
             "ndcg": ndcg_at_k(got, r.expected_doc_ids, args.k),
         })
     per_q = pd.DataFrame(rows)
-    per_q.to_csv(ROOT / "runs" / run / "retrieval_metrics.csv", index=False)
+    per_q.to_csv(ROOT / "runs" / run / f"retrieval_metrics{'_' + args.split if args.split else ''}.csv", index=False)
     frames.append(per_q)
 
 per_q = pd.concat(frames)
 by_type = per_q.pivot_table(index="question_type", columns="run", values="recall", aggfunc="mean") * 100
 by_type.loc["overall"] = per_q.groupby("run").recall.mean() * 100
-by_type["paper_bm25"] = pd.Series(PAPER_BM25_RECALL)
+if not args.split:  # paper numbers are over all 500, not comparable to one split
+    by_type["paper_bm25"] = pd.Series(PAPER_BM25_RECALL)
 summary = per_q.groupby(["run", "split"])[["recall", "mrr", "ndcg"]].mean().unstack("split") * 100
 summary[("recall", "all")] = per_q.groupby("run").recall.mean() * 100
 
