@@ -1,4 +1,4 @@
-"""Hand-written BM25 over the sparse index, top-10 for all 500 questions."""
+"""Own BM25 over the sparse index, top-10 for all 500 questions."""
 import json
 import time
 
