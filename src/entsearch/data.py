@@ -47,11 +47,12 @@ def iter_corpus(batch_size: int = 20_000, columns=("doc_id", "source_type", "tit
         yield [{k: r[k] for k in columns} for r in rows]
 
 
-def load_docs(doc_ids: list[str]) -> dict[str, tuple[str, str]]:
-    """doc_id -> (title, content) for the harness-equivalent copy."""
-    t = pq.read_table(CORPUS, columns=["doc_id", "title", "content"], filters=pc.field("doc_id").isin(list(set(doc_ids))))
+def load_docs(doc_ids: list[str], with_source: bool = False) -> dict[str, tuple[str, ...]]:
+    """doc_id -> (title, content), or (source_type, title, content) with_source, for the harness-equivalent copy."""
+    cols = ["doc_id", "source_type", "title", "content"] if with_source else ["doc_id", "title", "content"]
+    t = pq.read_table(CORPUS, columns=cols, filters=pc.field("doc_id").isin(list(set(doc_ids))))
     return {
-        r["doc_id"]: (r["title"], r["content"])
+        r["doc_id"]: tuple(r[c] for c in cols[1:])
         for r in t.to_pylist()
         if (r["doc_id"], len(r["content"])) not in SHADOWED
     }

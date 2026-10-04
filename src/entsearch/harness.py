@@ -65,14 +65,20 @@ def metrics_eval(run_dir: Path, questions: pd.DataFrame, parallelism: int = 8) -
         def gen():
             for ev in stream:
                 if ev.type == "response.completed":
-                    u = llm.completed_response(ev).usage
-                    with lock, open(run_dir / "usage.jsonl", "a", encoding="utf8") as f:
-                        f.write(json.dumps({
+                    # Accounting must never break judging: an exception here surfaces inside the harness's stream,
+                    # which retries and then scores the answer as incorrect.
+                    try:
+                        u = llm.completed_usage(ev)
+                        rec = {
                             "stage": "judge", "model": llm.MODEL,
                             "input_tokens": u.input_tokens, "output_tokens": u.output_tokens,
-                            "reasoning_tokens": u.output_tokens_details.reasoning_tokens,
+                            "reasoning_tokens": u.reasoning_tokens,
                             "cost_usd": (u.input_tokens * p_in + u.output_tokens * p_out) / 1e6,
-                        }) + "\n")
+                        }
+                    except Exception as e:
+                        rec = {"stage": "judge", "model": llm.MODEL, "error": repr(e)[:500]}
+                    with lock, open(run_dir / "usage.jsonl", "a", encoding="utf8") as f:
+                        f.write(json.dumps(rec) + "\n")
                 yield ev
 
         return gen()

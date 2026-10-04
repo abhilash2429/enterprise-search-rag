@@ -6,7 +6,6 @@ from dataclasses import dataclass
 
 from aws_bedrock_token_generator import provide_token
 from openai import OpenAI
-from openai.types.responses import Response
 
 from entsearch.data import ROOT
 
@@ -40,21 +39,40 @@ class Generation:
         return (self.input_tokens * p_in + self.output_tokens * p_out) / 1e6
 
 
-def completed_response(ev) -> Response:
-    """The SDK leaves `response` as a raw dict when the payload fails its schema. Validate it so a
-    malformed payload raises with the offending field instead of an opaque AttributeError."""
+@dataclass
+class Usage:
+    input_tokens: int
+    output_tokens: int
+    reasoning_tokens: int
+
+
+def completed_usage(ev) -> Usage:
+    """Token counts from a response.completed event.
+
+    The SDK leaves `response` as a raw dict when the payload fails its schema, and Bedrock does not always send fields
+    the SDK marks required (e.g. usage.input_tokens_details.cache_write_tokens). Only the three counts used here are
+    required; anything else missing is ignored.
+    """
     resp = ev.response
-    if isinstance(resp, dict):
-        try:
-            return Response.model_validate(resp)
-        except Exception as e:
-            raise RuntimeError(f"malformed response.completed payload: {e}; raw={json.dumps(resp)[:2000]}") from e
-    return resp
+    usage = resp.get("usage") if isinstance(resp, dict) else resp.usage
+    if usage is None:
+        raise RuntimeError("response.completed has no usage")
+    if not isinstance(usage, dict):
+        usage = usage.model_dump()
+    try:
+        return Usage(usage["input_tokens"], usage["output_tokens"], (usage.get("output_tokens_details") or {})["reasoning_tokens"])
+    except (KeyError, TypeError) as e:
+        raise RuntimeError(f"response.completed usage lacks {e}; usage={json.dumps(usage)[:500]}") from e
 
 
-def generate(llm: OpenAI, prompt: str, model: str = MODEL, effort: str = "medium") -> Generation:
-    """Same call shape as the harness: Responses API, raw stream, reasoning effort, reasoning summary on."""
-    key = hashlib.sha256(json.dumps([model, effort, prompt]).encode()).hexdigest()
+def generate(llm: OpenAI, prompt: str, model: str = MODEL, effort: str = "medium", seed: int = 0) -> Generation:
+    """Same call shape as the harness: Responses API, raw stream, reasoning effort, reasoning summary on.
+
+    seed is a replicate index for the cache key only (sampling is not seeded server side), so seeds 1, 2, ... are
+    fresh samples of the same prompt. Seed 0 keeps the original key.
+    """
+    key_parts = [model, effort, prompt] + ([seed] if seed else [])
+    key = hashlib.sha256(json.dumps(key_parts).encode()).hexdigest()
     path = CACHE / key[:2] / f"{key}.json"
     if path.exists():
         return Generation(**{**json.loads(path.read_text(encoding="utf8")), "cached": True})
@@ -70,7 +88,7 @@ def generate(llm: OpenAI, prompt: str, model: str = MODEL, effort: str = "medium
         if ev.type == "response.output_text.delta":
             text.append(ev.delta)
         elif ev.type == "response.completed":
-            usage = completed_response(ev).usage
+            usage = completed_usage(ev)
     if usage is None:
         raise RuntimeError("stream ended without response.completed")
 
@@ -78,7 +96,7 @@ def generate(llm: OpenAI, prompt: str, model: str = MODEL, effort: str = "medium
         text="".join(text).strip(),
         input_tokens=usage.input_tokens,
         output_tokens=usage.output_tokens,
-        reasoning_tokens=usage.output_tokens_details.reasoning_tokens,
+        reasoning_tokens=usage.reasoning_tokens,
         cached=False,
     )
     path.parent.mkdir(parents=True, exist_ok=True)

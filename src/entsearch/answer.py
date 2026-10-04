@@ -8,6 +8,7 @@ from pathlib import Path
 import pandas as pd
 from tqdm import tqdm
 
+from entsearch import answerer as cited
 from entsearch import llm, tracing
 from entsearch.data import load_docs
 from entsearch.harness import harness_import
@@ -26,33 +27,62 @@ def read_jsonl(path: Path) -> list[dict]:
     return [json.loads(line) for line in path.read_text(encoding="utf8").splitlines() if line.strip()]
 
 
-def answer_run(run_dir: Path, questions: pd.DataFrame, workers: int = 8) -> None:
-    """Reads run_dir/retrieval.jsonl, writes run_dir/answers.jsonl (harness format) and run_dir/usage.jsonl. Resumable."""
+def answer_run(run_dir: Path, questions: pd.DataFrame, workers: int = 8, answerer: str = "harness", seed: int = 0) -> None:
+    """Reads run_dir/retrieval.jsonl, writes run_dir/answers.jsonl (harness format) and run_dir/usage.jsonl. Resumable.
+
+    answerer="harness": the harness's ANSWER_GEN_PROMPT, the baseline. answerer="cited": entsearch.answerer, where the
+    judged `answer` has citation markers stripped and the row also carries the cited text, cited doc ids, abstention
+    flags, and the top reranker score when retrieval.jsonl has one.
+    """
+    if answerer not in ("harness", "cited"):
+        raise ValueError(f"unknown answerer {answerer!r}")
     prompt_tpl = harness_import("src.prompts.vector_search_answer_gen").ANSWER_GEN_PROMPT
-    retrieved = {r["question_id"]: r["document_ids"] for r in read_jsonl(run_dir / "retrieval.jsonl")}
+    retrieval = {r["question_id"]: r for r in read_jsonl(run_dir / "retrieval.jsonl")}
+    retrieved = {q: r["document_ids"] for q, r in retrieval.items()}
     done = {r["question_id"] for r in read_jsonl(run_dir / "answers.jsonl")}
     todo = questions[~questions.question_id.isin(done)]
     missing = set(todo.question_id) - set(retrieved)
     if missing:
         raise ValueError(f"{len(missing)} questions have no retrieval rows, e.g. {sorted(missing)[:3]}")
 
-    docs = load_docs([d for q in todo.question_id for d in retrieved[q]])
+    docs = load_docs([d for q in todo.question_id for d in retrieved[q]], with_source=answerer == "cited")
+    versions = None
+    if answerer == "cited":
+        from entsearch.index.neardup_embed import VersionPairs  # pulls in torch; only the cited answerer needs it
+
+        versions = VersionPairs()
     client = llm.client()
     lock = threading.Lock()
 
     def one(row) -> None:
         ids = retrieved[row.question_id]
-        prompt = prompt_tpl.format(context_documents=format_context(ids, docs), question=row.question)
+        extra = {}
+        if answerer == "cited":
+            pairs = versions(ids)
+            prompt = cited.build_prompt(row.question, ids, docs, pairs)
+            extra["version_pairs"] = [[a, b] for a, b, _ in pairs]
+            if "rerank_scores" in retrieval[row.question_id]:
+                extra["rerank_top"] = retrieval[row.question_id]["rerank_scores"][0] if ids else None
+        else:
+            prompt = prompt_tpl.format(context_documents=format_context(ids, docs), question=row.question)
         with tracing.question_span(run_dir.name, row.question_id, row.question_type) as root:
             root.set_attribute("langfuse.observation.input", json.dumps(row.question))
             with tracing.span("generate") as s:
                 tracing.record_hits(s, ids, row.expected_doc_ids)
-                gen = llm.generate(client, prompt)
+                gen = llm.generate(client, prompt, seed=seed)
                 tracing.record_llm(s, llm.MODEL, gen.input_tokens, gen.output_tokens, gen.reasoning_tokens, gen.cost, gen.cached)
                 s.set_attribute("langfuse.observation.output", json.dumps(gen.text))
+        answer = gen.text
+        if answerer == "cited":
+            p = cited.parse(gen.text, ids)
+            answer = p.text
+            extra |= {
+                "answer_cited": gen.text, "cited_doc_ids": p.cited_doc_ids, "invalid_citations": p.invalid_citations,
+                "abstained": p.abstained, "partial": p.partial,
+            }
         with lock:
             with open(run_dir / "answers.jsonl", "a", encoding="utf8") as f:
-                f.write(json.dumps({"question_id": row.question_id, "answer": gen.text, "document_ids": ids}) + "\n")
+                f.write(json.dumps({"question_id": row.question_id, "answer": answer, "document_ids": ids} | extra) + "\n")
             with open(run_dir / "usage.jsonl", "a", encoding="utf8") as f:
                 f.write(json.dumps({
                     "question_id": row.question_id, "stage": "generate", "model": llm.MODEL,
