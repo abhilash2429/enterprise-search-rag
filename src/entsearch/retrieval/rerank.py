@@ -62,7 +62,10 @@ class Reranker:
         (9 of 48 pairs); fp16 stays within 0.007 at the same speed.
         """
         self.tok = AutoTokenizer.from_pretrained(model, padding_side="left")
-        self.model = AutoModelForCausalLM.from_pretrained(model, dtype=dtype, attn_implementation="sdpa_repeat_kv").cuda().eval()
+        # device_map loads weights straight onto the GPU; .cuda() after a CPU load keeps ~1 GB more host memory.
+        self.model = AutoModelForCausalLM.from_pretrained(
+            model, dtype=dtype, attn_implementation="sdpa_repeat_kv", device_map="cuda"
+        ).eval()
         self.instruction, self.token_budget = instruction, token_budget
         self.yes, self.no = self.tok.convert_tokens_to_ids("yes"), self.tok.convert_tokens_to_ids("no")
         self.prefix = self.tok.encode(_PREFIX, add_special_tokens=False)

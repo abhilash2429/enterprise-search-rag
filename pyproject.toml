@@ -24,7 +24,16 @@ dependencies = [
     "opentelemetry-sdk>=1.45.0",
     "opentelemetry-exporter-otlp-proto-http>=1.45.0",
     "datasketch>=2.0.0",
+    "accelerate>=1.15.0",
 ]
+
+[project.optional-dependencies]
+mcp = [
+    "mcp>=2.3,<3",
+]
+
+[project.scripts]
+entsearch-mcp = "entsearch.serve.server:main"
 
 [dependency-groups]
 dev = [

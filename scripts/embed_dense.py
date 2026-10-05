@@ -19,10 +19,8 @@ import pyarrow.parquet as pq
 
 from entsearch.data import CORPUS, ROOT, doc_text, iter_corpus, load_questions
 from entsearch.index.chunking import CHUNK_SIZE, chunk_text
+from entsearch.retrieval.dense import MODEL, QUERY_TEMPLATE
 
-MODEL = "Qwen/Qwen3-Embedding-0.6B"
-# Model-card default task description and format; not tuned on this benchmark.
-QUERY_TEMPLATE = "Instruct: Given a web search query, retrieve relevant passages that answer the query\nQuery:{q}"
 OUT = ROOT / "data/index/dense_qwen3-0.6b_c512"
 OUT_WHOLE = ROOT / "data/index/dense_qwen3-0.6b_whole"
 WHOLE_DOC_TOKENS = 8192
