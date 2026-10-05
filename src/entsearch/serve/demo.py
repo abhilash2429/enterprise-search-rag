@@ -1,6 +1,7 @@
 """Demo API: the headline pipeline over HTTP, streaming each stage as a server-sent event, for the recorded demo UI.
 
   uv run entsearch-demo                    # http://127.0.0.1:8000/api, indexes load in the background
+  uv run entsearch-demo --fresh-cache      # no cached LLM replies: every stage runs for real, as on camera
 
 Contract: docs/demo-api.md. One question runs at a time (one GPU): /api/health reports busy, and /api/ask answers 409
 while a question is running. A client that disconnects does not stop the run; the GPU work finishes first.
@@ -11,6 +12,7 @@ import asyncio
 import json
 import logging
 import sys
+import tempfile
 import threading
 from concurrent.futures import Future
 from pathlib import Path
@@ -121,11 +123,14 @@ def main() -> None:
     p = argparse.ArgumentParser(prog="entsearch-demo", description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     p.add_argument("--data-dir", type=Path, default=ROOT / "data", help="directory holding index/ (default: repo data/)")
     p.add_argument("--no-verify", action="store_true", help="skip the confidence flag (needs the Azure bridge on :4100)")
+    p.add_argument("--fresh-cache", action="store_true",
+                   help="start from an empty LLM cache, so router, answer and verifier calls are real (for recording)")
     p.add_argument("--host", default="127.0.0.1")
     p.add_argument("--port", type=int, default=8000)
     a = p.parse_args()
     logging.basicConfig(level=logging.INFO, stream=sys.stderr, format="%(asctime)s %(name)s %(message)s")
-    cfg = Config(data_dir=a.data_dir, verify=not a.no_verify)
+    cache = tempfile.TemporaryDirectory(prefix="entsearch-llm-") if a.fresh_cache else None
+    cfg = Config(data_dir=a.data_dir, verify=not a.no_verify, cache_dir=Path(cache.name) if cache else None)
     uvicorn.run(build_app(start_loading(cfg), cfg.describe()), host=a.host, port=a.port)
 
 

@@ -221,11 +221,14 @@ thread (about a minute), so the client connects at once and the first call waits
 `entsearch-demo` serves the same pipeline over HTTP for the demo UI, streaming each stage (route, retrieve, fuse, rerank,
 answer, verify) as a server-sent event so the UI can show the pipeline working. Contract: [docs/demo-api.md](docs/demo-api.md).
 `web/fixtures/` holds real recorded runs of the demo questions (`scripts/record_demo_fixtures.py`), so the UI can be built
-and replayed without the indexes or a GPU.
+and replayed without the indexes or a GPU. The UI is a Next.js app in [web/](web/README.md): it replays the fixtures by
+default, or talks to the live backend when `NEXT_PUBLIC_API_BASE` is set.
 
 ```bash
 uv sync --extra demo
 uv run entsearch-demo                      # http://127.0.0.1:8000/api
+uv run entsearch-demo --fresh-cache        # empty LLM cache: router, answer and verifier calls are all real
+cd web && npm ci && NEXT_PUBLIC_API_BASE=http://localhost:8000/api npm run build && npm start
 ```
 
 ## Reproduce
@@ -291,6 +294,7 @@ src/entsearch/
   verifier.py              answer verifier behind the confidence flag
 scripts/                   index builds, batch runs, ablations, reports (see Reproduce)
 tests/                     unit tests
+web/                       Next.js demo UI (web/README.md)
 web/fixtures/              recorded demo API runs for the frontend's offline mode
 results/                   result tables for the baselines and near-dup studies
 docs/decisions.md          every design decision with its reason and numbers
