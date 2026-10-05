@@ -2,6 +2,7 @@
 
   bm25   own BM25, top-100 docs
   dense  Qwen3 c512, top-4000 chunks by cosine, each doc ranked by its best chunk (MaxP), top-100 docs
+         (--index/--run pick another embedding index, e.g. dense_qwen3-0.6b_whole -> dense_qwen3_whole)
 Writes runs/<run>/candidates.jsonl: {"question_id", "document_ids", "scores"}, best first.
 """
 import argparse
@@ -13,6 +14,7 @@ from entsearch.data import ROOT, load_questions
 
 DEPTH = 100
 CHUNK_LIMIT = 4000
+EXPECTED_ROWS = {"dense_qwen3-0.6b_c512": 1_538_921, "dense_qwen3-0.6b_whole": 511_958}
 
 
 def bm25() -> None:
@@ -29,19 +31,20 @@ def bm25() -> None:
     print(f"wrote {out}")
 
 
-def dense() -> None:
+def dense(index_name: str, run: str) -> None:
     import pyarrow.parquet as pq
     import torch
 
-    index = ROOT / "data/index/dense_qwen3-0.6b_c512"
+    index = ROOT / "data/index" / index_name
     shards = sorted(index.glob("shard_*.npy"))
     vecs = torch.from_numpy(np.concatenate([np.load(s) for s in shards])).cuda()
     doc_ids = np.concatenate([pq.read_table(s.with_suffix(".parquet"), columns=["doc_id"])["doc_id"].to_numpy() for s in shards])
-    assert len(doc_ids) == len(vecs) == 1_538_921, (len(doc_ids), len(vecs))
+    assert len(doc_ids) == len(vecs) == EXPECTED_ROWS[index_name], (len(doc_ids), len(vecs))
     queries = torch.from_numpy(np.load(index / "queries.npy")).to(vecs.device, vecs.dtype)
     qids = json.loads((index / "queries.json").read_text())
 
-    out = ROOT / "runs/dense_qwen3/candidates.jsonl"
+    out = ROOT / "runs" / run / "candidates.jsonl"
+    out.parent.mkdir(parents=True, exist_ok=True)
     fewest = DEPTH
     with open(out, "w", encoding="utf8") as f:
         for start in range(0, len(qids), 50):
@@ -59,4 +62,7 @@ def dense() -> None:
 
 p = argparse.ArgumentParser()
 p.add_argument("retriever", choices=["bm25", "dense"])
-{"bm25": bm25, "dense": dense}[p.parse_args().retriever]()
+p.add_argument("--index", default="dense_qwen3-0.6b_c512")
+p.add_argument("--run", default="dense_qwen3")
+a = p.parse_args()
+bm25() if a.retriever == "bm25" else dense(a.index, a.run)

@@ -1,7 +1,8 @@
 """Turn cached reranker scores into runs: pure rerank at several depths, plus RRF(rerank, hybrid) as an ablation.
 
 Reads runs/<scores_run>/scores.jsonl (candidates in hybrid order). Pointwise scores, so depth d = re-sort of the
-first d candidates. Writes runs/<scores_run>_d<d>/retrieval.jsonl and runs/<scores_run>_rrf_d100/retrieval.jsonl,
+first d candidates. Writes runs/<scores_run>_d<d>/retrieval.jsonl, runs/<scores_run>_rrf_d100/retrieval.jsonl, and
+the context-size ablation runs/<scores_run>_d100_ctx<n>/retrieval.jsonl (top n instead of top 10 go to the answerer),
 only for questions that have scores (partial runs evaluate on what is done).
 Ties in reranker score keep hybrid order.
 """
@@ -16,18 +17,27 @@ from entsearch.retrieval.rrf import rrf
 
 DEPTHS = (20, 50, 100)
 TOP_K = 10
+CONTEXT_SIZES = (5, 20)
 
 p = argparse.ArgumentParser()
 p.add_argument("--scores-run", default="rerank_qwen3")
 args = p.parse_args()
 
 rows = read_jsonl(ROOT / "runs" / args.scores_run / "scores.jsonl")
-runs: dict[str, list[dict]] = {f"{args.scores_run}_d{d}": [] for d in DEPTHS} | {f"{args.scores_run}_rrf_d100": []}
+runs: dict[str, list[dict]] = (
+    {f"{args.scores_run}_d{d}": [] for d in DEPTHS} | {f"{args.scores_run}_rrf_d100": []}
+    | {f"{args.scores_run}_d100_ctx{n}": [] for n in CONTEXT_SIZES}
+)
 for r in rows:
     ids, s = r["document_ids"], np.asarray(r["scores"])
     for d in DEPTHS:
         order = np.argsort(-s[:d], kind="stable")[:TOP_K]
         runs[f"{args.scores_run}_d{d}"].append({
+            "question_id": r["question_id"], "document_ids": [ids[i] for i in order], "rerank_scores": s[order].tolist(),
+        })
+    for n in CONTEXT_SIZES:
+        order = np.argsort(-s[:100], kind="stable")[:n]
+        runs[f"{args.scores_run}_d100_ctx{n}"].append({
             "question_id": r["question_id"], "document_ids": [ids[i] for i in order], "rerank_scores": s[order].tolist(),
         })
     reranked = [ids[i] for i in np.argsort(-s, kind="stable")]

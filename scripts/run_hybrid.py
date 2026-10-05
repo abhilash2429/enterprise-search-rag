@@ -1,8 +1,10 @@
 """RRF over bm25_own and dense_qwen3 candidates (100 docs each), for each k in the sweep.
 
 Writes runs/hybrid_rrf_k<k>/retrieval.jsonl (top-10 docs, harness format) and candidates.jsonl (fused top-100,
-the reranker's input). k=60 is the headline config; the other k values are an ablation.
+the reranker's input). k=60 is the headline config; the other k values are an ablation. --dense swaps the dense run
+(e.g. dense_qwen3_whole for the chunking ablation) and writes runs/hybrid_rrf_k<k>_<dense suffix> for k=60 only.
 """
+import argparse
 import json
 
 from entsearch.answer import read_jsonl
@@ -12,11 +14,16 @@ from entsearch.retrieval.rrf import rrf
 KS = (10, 20, 60, 100)
 TOP_K, DEPTH = 10, 100
 
-lists = [{r["question_id"]: r["document_ids"] for r in read_jsonl(ROOT / "runs" / run / "candidates.jsonl")} for run in ("bm25_own", "dense_qwen3")]
+p = argparse.ArgumentParser()
+p.add_argument("--dense", default="dense_qwen3")
+dense = p.parse_args().dense
+suffix = "" if dense == "dense_qwen3" else "_" + dense.removeprefix("dense_qwen3_")
+
+lists = [{r["question_id"]: r["document_ids"] for r in read_jsonl(ROOT / "runs" / run / "candidates.jsonl")} for run in ("bm25_own", dense)]
 assert lists[0].keys() == lists[1].keys()
 
-for k in KS:
-    run_dir = ROOT / f"runs/hybrid_rrf_k{k}"
+for k in KS if not suffix else (60,):
+    run_dir = ROOT / f"runs/hybrid_rrf_k{k}{suffix}"
     run_dir.mkdir(parents=True, exist_ok=True)
     with open(run_dir / "retrieval.jsonl", "w", encoding="utf8") as ret, open(run_dir / "candidates.jsonl", "w", encoding="utf8") as cand:
         for qid in lists[0]:

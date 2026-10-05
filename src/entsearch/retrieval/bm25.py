@@ -55,10 +55,11 @@ class BM25:
             out[self.indices[s:e]] += (count * self.idf[t]) * self.weights[s:e]
         return out
 
-    def topk(self, query_terms: list[int], k: int = 10) -> tuple[np.ndarray, np.ndarray]:
-        """(doc_indices, scores) of the k best docs, best first. Only docs with score > 0. Ties: lower doc index first."""
+    def topk(self, query_terms: list[int], k: int = 10, mask: np.ndarray | None = None) -> tuple[np.ndarray, np.ndarray]:
+        """(doc_indices, scores) of the k best docs, best first. Only docs with score > 0, and only docs where the
+        boolean mask is True when one is given. Ties: lower doc index first."""
         scores = self.score(query_terms)
-        cand = np.flatnonzero(scores > 0)
+        cand = np.flatnonzero(scores > 0 if mask is None else (scores > 0) & mask)
         if k <= 0 or len(cand) == 0:
             return np.empty(0, dtype=np.int64), np.empty(0)
         if len(cand) > k:

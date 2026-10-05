@@ -76,6 +76,16 @@ def test_topk_order_ties_and_positive_only():
     assert list(idx2) == list(idx[:2])
 
 
+def test_topk_mask_keeps_unmasked_order():
+    docs = [[5], [0, 1], [0, 1], [0], [2, 2, 2], [0, 0, 0, 0]]
+    model = BM25().fit(*to_tf(docs, 6))
+    mask = np.array([True, False, True, True, True, False])
+    idx, scores = model.topk([0], k=10, mask=mask)
+    full_idx, _ = model.topk([0], k=10)
+    assert list(idx) == [i for i in full_idx if mask[i]]
+    np.testing.assert_allclose(scores, model.score([0])[idx])
+
+
 def test_scales_to_corpus_size():
     rng = np.random.default_rng(0)
     n_docs, n_terms, nnz = 512_000, 200_000, 20_000_000
