@@ -144,3 +144,35 @@ def test_server_reports_failed_load():
     fut.set_exception(FileNotFoundError("docstore.sqlite missing"))
     with pytest.raises(ToolError, match="index failed to load: docstore.sqlite missing"):
         call(build_server(fut), "search", {"query": "x"})
+
+
+@pytest.mark.parametrize("verdict, top, flagged, low", [
+    ("supported", 0.99, False, False),
+    ("supported", 0.50, True, True),
+    ("unsupported", 0.99, True, False),
+])
+def test_confidence_flags_on_verdict_or_low_rerank_score(monkeypatch, verdict, top, flagged, low):
+    import json
+
+    import entsearch.serve.pipeline as P
+    from entsearch.llm import Generation
+
+    reply = json.dumps({"claims": [], "addresses_question": True, "verdict": verdict, "reasoning": "r"})
+    monkeypatch.setattr(P.llm, "bridge_client", lambda: None)
+    monkeypatch.setattr(P.llm, "generate", lambda *a, **k: Generation(reply, 10, 5, 0, False, "gpt-6-luna"))
+    hits = [P.Hit("a", "slack", "t", "s", top, 0.1)]
+    docs = {"a": ("slack", "t", "text")}
+    conf, cost = P.Pipeline._confidence(object.__new__(P.Pipeline), "q?", "ans [1]", ["a"], docs, [], hits)
+    assert conf["flagged"] is flagged and conf["low_retrieval_score"] is low and conf["verdict"] == verdict
+    assert cost > 0
+
+
+def test_confidence_reports_unparsable_verifier_reply(monkeypatch):
+    import entsearch.serve.pipeline as P
+    from entsearch.llm import Generation
+
+    monkeypatch.setattr(P.llm, "bridge_client", lambda: None)
+    monkeypatch.setattr(P.llm, "generate", lambda *a, **k: Generation("not json", 10, 5, 0, False, "gpt-6-luna"))
+    hits = [P.Hit("a", "slack", "t", "s", 0.99, 0.1)]
+    conf, _ = P.Pipeline._confidence(object.__new__(P.Pipeline), "q?", "ans", ["a"], {"a": ("slack", "t", "x")}, [], hits)
+    assert conf["flagged"] is None and "did not parse" in conf["error"]

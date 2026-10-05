@@ -11,7 +11,7 @@ from pathlib import Path
 
 import numpy as np
 
-from entsearch import answerer, llm
+from entsearch import answerer, llm, verifier
 from entsearch.data import doc_text
 from entsearch.docstore import DocStore
 from entsearch.retrieval import router
@@ -31,9 +31,10 @@ class Config:
     # by host commit, so activation memory costs the same in RAM; scores differ only by fp16 batch-shape noise.
     rerank_token_budget: int = 8192
     cache_dir: Path | None = None  # LLM response cache; default <data_dir>/../cache/llm
+    verify: bool = True  # confidence flag: gpt-6-luna verifier through the local bridge + reranker top-score threshold
 
     def describe(self) -> dict:
-        return {"router": self.router, "rerank": self.rerank, "dense": self.dense}
+        return {"router": self.router, "rerank": self.rerank, "dense": self.dense, "verify": self.verify}
 
 
 @dataclass
@@ -65,6 +66,8 @@ class AnswerResult:
     config: dict
     cost_usd: float
     seconds: dict[str, float] = field(default_factory=dict)
+    # Flag only: the answer is returned either way. None when verify is off or the answer is a refusal.
+    confidence: dict | None = None
 
 
 class Pipeline:
@@ -166,18 +169,40 @@ class Pipeline:
         docs = self.docs.get(ids)
         t = dict(res.seconds)
         clock = time.perf_counter()
-        prompt = answerer.build_prompt(question, ids, docs, self.versions(ids))
-        gen = llm.generate(llm.client(), prompt)
+        pairs = self.versions(ids)
+        gen = llm.generate(llm.client(), answerer.build_prompt(question, ids, docs, pairs))
         t["generate"] = round(time.perf_counter() - clock, 3)
-        t["total"] = round(time.perf_counter() - start, 3)
         p = answerer.parse(gen.text, ids)
+        confidence = None
+        if self.cfg.verify and not p.abstained:
+            clock = time.perf_counter()
+            confidence, vcost = self._confidence(question, gen.text, ids, docs, pairs, res.hits)
+            cost += vcost
+            t["verify"] = round(time.perf_counter() - clock, 3)
+        t["total"] = round(time.perf_counter() - start, 3)
         num = {d: n for n, d in enumerate(ids, 1)}
         citations = [{"n": num[d], "doc_id": d, "source": docs[d][0], "title": docs[d][1]} for d in p.cited_doc_ids]
         return AnswerResult(
             answer=gen.text, citations=citations, abstained=p.abstained, partial=p.partial, context_doc_ids=ids,
             routed_sources=res.routed_sources, config=res.config,
-            cost_usd=round(cost + (0.0 if gen.cached else gen.cost), 6), seconds=t,
+            cost_usd=round(cost + (0.0 if gen.cached else gen.cost), 6), seconds=t, confidence=confidence,
         )
+
+    def _confidence(self, question, answer, ids, docs, pairs, hits) -> tuple[dict, float]:
+        gen = llm.generate(llm.bridge_client(), verifier.build_prompt(question, answer, ids, docs, pairs),
+                           model=verifier.MODEL, effort="medium")
+        cost = 0.0 if gen.cached else gen.cost
+        top = hits[0].rerank_score if hits else None
+        low = top is not None and top < verifier.FLAG_TAU
+        try:
+            v = verifier.parse(gen.text)
+        except ValueError as e:
+            return {"flagged": None, "error": f"verifier reply did not parse: {e}", "rerank_top": top}, cost
+        return {
+            "flagged": v.flagged or low, "verdict": v.verdict, "addresses_question": v.addresses_question,
+            "low_retrieval_score": low, "rerank_top": top, "threshold": verifier.FLAG_TAU,
+            "claims": v.claims, "reasoning": v.reasoning,
+        }, cost
 
     def get_document(self, doc_id: str) -> dict | None:
         d = self.docs.get([doc_id]).get(doc_id)

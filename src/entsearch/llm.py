@@ -13,8 +13,10 @@ REGION = "us-east-1"
 BASE_URL = f"https://bedrock-mantle.{REGION}.api.aws/v1"
 MODEL = "openai.gpt-oss-120b"
 CACHE = ROOT / "cache/llm"
-# Standard tier, USD per 1M tokens.
-PRICE = {MODEL: (0.15, 0.60)}
+# Local bridge to Azure AI Foundry (OpenAI Responses API, no auth on the local port).
+BRIDGE_URL = "http://127.0.0.1:4100/v1"
+# USD per 1M tokens (input, output). gpt-oss: Bedrock standard tier. gpt-6-luna: Azure, under 272K input tokens.
+PRICE = {MODEL: (0.15, 0.60), "gpt-6-luna": (0.125, 0.50)}
 
 
 def bedrock_token() -> str:
@@ -25,6 +27,10 @@ def client() -> OpenAI:
     return OpenAI(base_url=BASE_URL, api_key=bedrock_token(), max_retries=5, timeout=600)
 
 
+def bridge_client() -> OpenAI:
+    return OpenAI(base_url=BRIDGE_URL, api_key="unused", max_retries=5, timeout=600)
+
+
 @dataclass
 class Generation:
     text: str
@@ -32,10 +38,11 @@ class Generation:
     output_tokens: int
     reasoning_tokens: int
     cached: bool
+    model: str = MODEL  # cache records written before this field existed are all gpt-oss
 
     @property
     def cost(self) -> float:
-        p_in, p_out = PRICE[MODEL]
+        p_in, p_out = PRICE[self.model]
         return (self.input_tokens * p_in + self.output_tokens * p_out) / 1e6
 
 
@@ -98,6 +105,7 @@ def generate(llm: OpenAI, prompt: str, model: str = MODEL, effort: str = "medium
         output_tokens=usage.output_tokens,
         reasoning_tokens=usage.reasoning_tokens,
         cached=False,
+        model=model,
     )
     path.parent.mkdir(parents=True, exist_ok=True)
     rec = {k: v for k, v in gen.__dict__.items() if k != "cached"}

@@ -28,7 +28,8 @@ log = logging.getLogger("entsearch.mcp")
 INSTRUCTIONS = """Search and question answering over a company's internal documents (512K documents from Slack, \
 Gmail, Google Drive, Confluence, Jira, Linear, GitHub, HubSpot and Fireflies meeting transcripts; the \
 EnterpriseRAG-Bench corpus). Use `answer` for a direct cited answer, `search` to see ranked documents yourself, and \
-`get_document` to read a full document from either."""
+`get_document` to read a full document from either. `answer` also returns a confidence flag: a second model checks \
+each cited claim against its document; flagged answers deserve a look at the cited documents before being relied on."""
 
 
 def build_server(load: "Future[Pipeline]") -> MCPServer:
@@ -58,7 +59,9 @@ def build_server(load: "Future[Pipeline]") -> MCPServer:
     def answer(question: str) -> dict[str, Any]:
         """Answer a question from the top 10 retrieved documents. The answer cites documents with [n] markers;
         `citations` maps each n to its doc_id, source and title. If the documents do not contain the answer it says
-        so (abstained=true) rather than guessing; partial=true means some of the question is not covered."""
+        so (abstained=true) rather than guessing; partial=true means some of the question is not covered.
+        `confidence.flagged` is true when the verifier finds claims the cited documents do not support, or retrieval
+        scored low; `confidence.reasoning` says why."""
         with lock:
             return asdict(pipeline().answer(question))
 
@@ -95,6 +98,7 @@ def main() -> None:
     p.add_argument("--no-router", action="store_true", help="skip the LLM source router")
     p.add_argument("--no-rerank", action="store_true", help="skip the cross-encoder; return fused order")
     p.add_argument("--dense", choices=["fp16", "binary", "none"], default="fp16")
+    p.add_argument("--no-verify", action="store_true", help="skip the confidence flag (needs the Azure bridge on :4100)")
     p.add_argument("--device", default="cuda", help="device for the query encoder and reranker")
     p.add_argument("--transport", choices=["stdio", "streamable-http"], default="stdio")
     p.add_argument("--host", default="127.0.0.1")
@@ -102,7 +106,8 @@ def main() -> None:
     a = p.parse_args()
     logging.basicConfig(level=logging.INFO, stream=sys.stderr, format="%(asctime)s %(name)s %(message)s")
 
-    cfg = Config(data_dir=a.data_dir, router=not a.no_router, rerank=not a.no_rerank, dense=a.dense, device=a.device)
+    cfg = Config(data_dir=a.data_dir, router=not a.no_router, rerank=not a.no_rerank, dense=a.dense, device=a.device,
+                 verify=not a.no_verify)
     server = build_server(start_loading(cfg))
     if a.transport == "stdio":
         server.run("stdio")

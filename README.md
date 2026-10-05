@@ -102,6 +102,24 @@ with a transformers query encoder (cosine 0.9999 to the vLLM vectors), and near-
 places: hybrid retrieval plus reranking lift recall@10 by about 11 points, and the cited answerer lifts completeness (64.7
 vs 53.5 on dev with the same docs) far more than correctness (70.2 vs 68.7).
 
+**When the system is wrong, it rarely says so, and a verifier flag helps only partly.** On test, 20% of non-refusal
+answers are judged wrong, and the answerer abstains on under 1% of answerable questions. A confidence flag now marks
+answers to double-check: gpt-6-luna (a different model family from the gpt-oss judge) checks each cited claim against its
+document, and an answer is also flagged when the reranker's top score is below 0.949. The flag never changes the answer,
+so the scores above are unaffected. The threshold was picked on dev by max F1; the test row is one pass with everything
+locked, on seed-0 answers.
+
+| Split | Answers | Wrong | Flagged | Wrong answers caught | Correct answers flagged | Correct if not flagged | Correct if flagged |
+|---|---|---|---|---|---|---|---|
+| Dev | 145 | 27.6% | 58 | 77.5% [65.0, 90.0] | 25.7% [17.1, 34.3] | 89.7% [82.8, 95.4] | 46.6% |
+| Test | 335 | 20.0% | 140 | 71.6% [59.7, 82.1] | 34.3% [28.7, 40.3] | 90.3% [86.2, 94.4] | 65.7% [57.9, 73.6] |
+
+An unflagged answer is right about 90% of the time; a flagged one is a coin flip on dev and two in three on test. The flag
+is noisy: on test two of every three flags land on correct answers, mostly "partially supported" verdicts on long
+multi-claim answers, and the false-alarm rate rose from 26% on dev to 34%. Almost all of the signal comes from the
+verifier: the reranker score alone barely separates right from wrong (AUROC 0.56). Cost about $0.0023 per answer and a few
+seconds; `--no-verify` turns it off.
+
 **The source router did not replicate.** On dev it added +4.4 [+1.1, +7.7] end to end and +3.1 recall@10, mostly on semantic
 questions (+8.1). On test it is -0.1 [-2.3, +2.1] end to end and +0.6 recall@10. It stays in the headline because that was the
 call made on dev before test was run; I report the test result as is and changed nothing after seeing it. The router is
@@ -145,6 +163,8 @@ Every decision, its alternatives and the dev numbers behind it are logged in [do
 - Generator and judge are the same model (gpt-oss-120b). The judge is validated against hand labels, but scores are not
   comparable to the paper's GPT-5.4 leaderboard numbers.
 - The frontier agent ran one seed on dev only, with a different generator from the pipeline.
+- The confidence flag is evaluated against the gpt-oss judge's labels, which are themselves about 92% accurate, so some
+  "false alarms" and "misses" are judge errors. It catches about 70% of wrong answers; the rest still look confident.
 - Both dense indexes were built from text prompts that vLLM did not end with EOS, while the Qwen3-Embedding model card
   appends EOS before last-token pooling. Online queries match the index, so the system is consistent, but dense alone may be
   weaker than the model allows. Not ablated.
@@ -161,10 +181,12 @@ Every decision, its alternatives and the dev numbers behind it are logged in [do
 4. **Rerank.** Qwen3-Reranker-0.6B scores each of the 100 docs (full text up to 4096 tokens, fp16) and the top 10 go on.
 5. **Answer.** The 10 docs are numbered in context; the answerer cites `[n]` per claim, sees flags on docs that look like
    versions of each other and prefers the latest, and abstains with a fixed sentence when the docs do not answer.
+   A gpt-6-luna verifier then checks each cited claim against its document and sets a confidence flag (flag only).
 6. **Evaluate.** The harness judge scores correctness, completeness and recall. Paired bootstrap CIs over questions, 3
    generation seeds per system.
-7. **Trace.** OpenTelemetry span per stage with latency, tokens, dollars and gold-doc survival, written to local JSONL and
-   exported to Langfuse when keys are set.
+7. **Trace.** Batch runs write OpenTelemetry spans to local JSONL, exported to Langfuse when keys are set: BM25 retrieval
+   and answer generation, with latency, tokens, dollars and gold-doc hits. The MCP server reports per-stage seconds in each
+   response but does not emit spans.
 
 ## MCP server
 
@@ -173,10 +195,11 @@ Every decision, its alternatives and the dev numbers behind it are logged in [do
 | Tool | What it returns |
 |---|---|
 | `search(query, k=10)` | Top-k docs (id, source, title, snippet, scores), the routed sources, the serving config, per-stage seconds |
-| `answer(question)` | Cited answer from the top 10 docs, `[n]` markers mapped to doc ids, abstention and partial flags, cost |
+| `answer(question)` | Cited answer from the top 10 docs, `[n]` markers mapped to doc ids, abstention and partial flags, confidence flag with the verifier's per-claim verdicts and reasoning, cost |
 | `get_document(doc_id)` | Full text of one document |
 
-It needs the indexes under `data/index/` (see Reproduce), the doc store, and AWS credentials for the router and answerer:
+It needs the indexes under `data/index/` (see Reproduce), the doc store, AWS credentials for the router and answerer, and an
+OpenAI Responses-compatible endpoint serving gpt-6-luna for the confidence flag (`llm.BRIDGE_URL`; skip with `--no-verify`):
 
 ```bash
 uv sync --extra mcp
@@ -218,7 +241,8 @@ uv run python scripts/kill_test.py bm25_opensearch rerank_router_d100 --seeds 3
 ```
 
 Ablations: `run_hybrid.py` (RRF k sweep, `--dense` for the whole-doc index), `run_quantized.py`, `embed_dense.py --whole-doc`,
-`run_rerank.py --instruction default`, `run_agent_baseline.py` (frontier agent, see its docstring). `eval_retrieval.py`
+`run_rerank.py --instruction default`, `run_agent_baseline.py` (frontier agent, see its docstring), `run_verifier.py` then
+`eval_flagger.py` (confidence flag: dev picks the threshold, test reads it). `eval_retrieval.py`
 reports recall, MRR and nDCG per question type; `report_harness.py` the judge metrics. The OpenSearch reproduction is
 `docker compose up -d` then `run_opensearch_bm25.py`.
 
