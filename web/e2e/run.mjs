@@ -24,7 +24,7 @@ const VIEWPORT = { width: 1920, height: 1080 };
 const readJson = (...p) => JSON.parse(readFileSync(path.join(FIXTURES, ...p), "utf8"));
 const readRun = (id) =>
   readFileSync(path.join(FIXTURES, "ask", `${id}.jsonl`), "utf8")
-    .split("\n")
+    .split(/\r?\n/)
     .filter((l) => l.trim())
     .map((l) => JSON.parse(l));
 const fmt = (s) => `${s < 0.1 ? s.toFixed(2) : s.toFixed(1)} s`;
@@ -65,6 +65,18 @@ class Check {
   }
 }
 
+/** Expands the pipeline steps of the latest turn (the setting then holds for later turns). */
+async function expandSteps(page) {
+  const toggle = page.locator('[data-role="steps-toggle"]').last();
+  await toggle.waitFor({ timeout: 10000 });
+  if ((await toggle.getAttribute("aria-expanded")) !== "true") await toggle.click();
+}
+
+const PROGRESS = {
+  route: "Choosing which sources to search",
+  rerank: "Reranking 100 candidates",
+};
+
 async function newPage(browser) {
   const context = await browser.newContext({ viewport: VIEWPORT });
   const page = await context.newPage();
@@ -89,6 +101,14 @@ async function checkRecorded(browser, q) {
   // While waiting: the answer skeleton shows, and stages fill in as their events arrive.
   await page.locator('[data-role="answer-skeleton"]').waitFor({ timeout: 5000 });
   c.ok(true, "answer skeleton shown");
+  // Collapsed, the steps are one line naming the step in progress; it changes as each step starts.
+  const stepsLabel = page.locator('[data-role="steps-label"]');
+  if (SPEED <= 2) {
+    await page.waitForFunction((t) => document.querySelector('[data-role="steps-label"]')?.textContent === t, PROGRESS.rerank, { timeout: 30000 });
+    c.ok(true, "collapsed steps line moves on to the running step");
+    c.eq(await page.locator("[data-stage]").count(), 0, "collapsed: no step rows");
+  }
+  await expandSteps(page);
   if (SPEED <= 2) {
     const rerank = page.locator('[data-stage="rerank"][data-status="running"]');
     await rerank.waitFor({ timeout: 30000 });
@@ -100,8 +120,9 @@ async function checkRecorded(browser, q) {
       c.eq(await page.locator(`[data-stage="${s}"]`).getAttribute("data-status"), "done", `${s} done while reranking`);
     }
     for (const s of ["generate", "verify"]) {
-      c.eq(await page.locator(`[data-stage="${s}"]`).getAttribute("data-status"), "pending", `${s} pending while reranking`);
+      c.eq(await page.locator(`[data-stage="${s}"]`).count(), 0, `${s} not shown before it starts`);
     }
+    c.eq(await stepsLabel.innerText(), PROGRESS.rerank, "expanded: header still names the running step");
     c.ok(await page.locator('[data-role="fused-preview"]').isVisible(), "fused candidates shown while reranking");
     c.eq(await page.locator("[data-fused-rank]").count(), 10, "fused top 10 shown before rerank");
 
@@ -131,6 +152,16 @@ async function checkRecorded(browser, q) {
     c.eq(await card.getAttribute("data-status"), "done", `${s} status`);
     c.eq(await card.locator('[data-role="stage-time"]').innerText(), fmt(D[s].seconds), `${s} seconds`);
   }
+  c.eq(await stepsLabel.innerText(), `Ran ${D.start.stages.length} steps`, "finished steps header");
+  // The total sits on the header row, right-aligned, on one line.
+  // Measured in one pass: the thread may still be scrolling to the bottom.
+  const box = await page.evaluate(() => {
+    const r = (sel) => document.querySelector(sel).getBoundingClientRect();
+    const [head, total, row] = [r('[data-role="steps-toggle"]'), r('[data-role="total"]'), r('[data-role="steps"]')];
+    return { dy: Math.abs(head.top + head.height / 2 - (total.top + total.height / 2)), h: total.height, dx: Math.abs(total.right - row.right) };
+  });
+  c.ok(box.dy < 2 && box.h < 24, `total on the steps header row, one line (${JSON.stringify(box)})`);
+  c.ok(box.dx < 2, "total right-aligned in the answer column");
   const badges = await page.locator('[data-role="routed"] [data-source]').evaluateAll((els) => els.map((e) => e.dataset.source));
   c.eq(badges, D.route.sources, "route badges");
   c.ok((await page.locator('[data-role="cost"]').innerText()).includes(`$${D.done.cost_usd.toFixed(4)}`), "total cost");
@@ -295,6 +326,7 @@ async function checkRefusal(browser) {
     route.fulfill({ status: 200, headers: { "Content-Type": "text/event-stream" }, body }),
   );
   await page.locator('[data-question="qst_0484"]').click();
+  await expandSteps(page);
   await page.locator('[data-banner="abstained"]').waitFor({ timeout: 10000 });
   c.ok(true, "refusal banner");
   c.ok((await page.getByText("Not verified: refusals are not checked.").count()) === 1, "verify skipped note");
@@ -315,7 +347,7 @@ async function checkUnknown(browser) {
   const banner = page.locator('[data-banner="failure"]');
   await banner.waitFor({ timeout: 10000 });
   c.ok((await banner.innerText()).includes("Only the demo questions work offline"), "offline message");
-  c.eq(await page.locator('[data-stage="route"]').getAttribute("data-status"), "pending", "no stage ran");
+  c.eq(await page.locator('[data-role="steps"]').count(), 0, "no steps shown when no stage ran");
   c.eq(errors, [], "no page errors");
   await close();
   return c;
@@ -403,7 +435,7 @@ async function checkErrors(browser, q) {
   return c;
 }
 
-async function checkRecordMode(browser) {
+async function checkRecordMode(browser, questions) {
   const c = new Check("record mode");
   const context = await browser.newContext({ viewport: VIEWPORT });
   const page = await context.newPage();
@@ -421,6 +453,30 @@ async function checkRecordMode(browser) {
   c.eq(await page.evaluate(() => getComputedStyle(document.body).cursor), "none", "cursor: none applied");
   await page.mouse.move(500, 500);
   c.eq(await page.evaluate(() => "idle" in document.documentElement.dataset), false, "cursor back on movement");
+
+  // No page scroll in either direction: real Chrome shows scrollbars that headless hides, and a vertical one would
+  // also push the layout sideways. Checked with an answered question (steps expanded), on Evidence and Retrieval.
+  const q = questions.reduce((a, b) => (readRun(a.question_id).at(-1).t <= readRun(b.question_id).at(-1).t ? a : b));
+  await page.locator(`[data-question="${q.question_id}"]`).click();
+  await expandSteps(page);
+  await waitDone(page, runMs(q.question_id));
+  await page.locator('[data-role="hits"]').waitFor();
+  const fits = () =>
+    page.evaluate(() => {
+      const d = document.documentElement;
+      return { sh: d.scrollHeight, ch: d.clientHeight, sw: d.scrollWidth, cw: d.clientWidth };
+    });
+  for (const view of ["evidence", "retrieval"]) {
+    if (view === "retrieval") await page.keyboard.press("r");
+    for (const size of [VIEWPORT, { width: 1600, height: 900 }]) {
+      await page.setViewportSize(size);
+      await page.waitForTimeout(400);
+      const m = await fits();
+      const at = `${size.width}x${size.height} ${view}`;
+      c.ok(m.sh <= m.ch, `${at}: scrollHeight ${m.sh} <= clientHeight ${m.ch}`);
+      c.ok(m.sw <= m.cw, `${at}: scrollWidth ${m.sw} <= clientWidth ${m.cw}`);
+    }
+  }
   await context.close();
   return c;
 }
@@ -429,7 +485,7 @@ async function checkBenchmark(browser) {
   const c = new Check("benchmark page");
   const { page, errors, close } = await newPage(browser);
   await page.goto(`${BASE}/benchmark`);
-  const readme = readFileSync(path.join(ROOT, "..", "README.md"), "utf8").split("\n");
+  const readme = readFileSync(path.join(ROOT, "..", "README.md"), "utf8").split(/\r?\n/);
   const cells = (l) => l.trim().replace(/^\||\|$/g, "").split("|").map((x) => x.trim());
   const tables = await page.locator("[data-table]").evaluateAll((els) =>
     els.map((el) => ({
@@ -460,6 +516,7 @@ async function checkA11y(browser, q) {
     const { page, close } = await newPage(browser);
     await page.goto(`${BASE}/?theme=${theme}`);
     await page.locator(`[data-question="${q.question_id}"]`).click();
+    await expandSteps(page);
     await waitDone(page, runMs(q.question_id));
     await page.locator('[data-role="hits"]').waitFor();
     await page.getByRole("button", { name: "Show gold answer" }).click();
@@ -502,7 +559,7 @@ const results = await Promise.all([
   safe("unknown question", () => checkUnknown(browser)),
   safe("keyboard", () => checkKeyboard(browser, questions)),
   safe("error states", () => checkErrors(browser, pick("qst_0459"))),
-  safe("record mode", () => checkRecordMode(browser)),
+  safe("record mode", () => checkRecordMode(browser, questions)),
   safe("benchmark page", () => checkBenchmark(browser)),
   safe("accessibility", () => checkA11y(browser, pick("qst_0037"))),
 ]);

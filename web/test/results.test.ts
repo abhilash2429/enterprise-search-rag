@@ -6,7 +6,7 @@ import { describe, expect, it } from "vitest";
 
 import { ALL_TABLES } from "@/lib/results";
 
-const README = readFileSync(path.join(process.cwd(), "..", "README.md"), "utf8").split("\n");
+const README = readFileSync(path.join(process.cwd(), "..", "README.md"), "utf8").split(/\r?\n/);
 const cells = (line: string) => line.trim().replace(/^\||\|$/g, "").split("|").map((c) => c.trim());
 
 /** Line index where the section path starts and ends: "## A > ### B" or "## A > **B.** paragraph". */

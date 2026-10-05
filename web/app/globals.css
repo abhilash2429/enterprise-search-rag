@@ -270,10 +270,16 @@
 
 /* Recording mode (?record=1): one type step larger, no dev-only UI, cursor hidden after 2 s idle. */
 html[data-record] body { zoom: 1.125; }
-/* Zoom scales viewport units too, so heights tied to the viewport are divided back by the zoom factor. */
+/* Zoom scales viewport units too, so heights tied to the viewport are divided back by the zoom factor. The canvas
+   padding sits inside the zoomed body and is scaled as well, so it is subtracted after the division. The canvas is
+   border-box, so its min-height already includes that padding. */
 html[data-record] .app-canvas { min-height: calc(100dvh / 1.125); }
+html[data-record] .app-shell { min-height: calc(100dvh / 1.125 - 1.5rem); }
+@media (min-width: 1024px) {
+  html[data-record] .app-shell { min-height: calc(100dvh / 1.125 - 2rem); }
+}
 @media (min-width: 1280px) {
-  html[data-record] .app-shell { height: calc((100dvh - 2rem) / 1.125); min-height: 0; }
+  html[data-record] .app-shell { height: calc(100dvh / 1.125 - 2rem); min-height: 0; }
 }
 html[data-record] .dev-only { display: none !important; }
 html[data-record][data-idle] * { cursor: none !important; }

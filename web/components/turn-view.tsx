@@ -43,6 +43,8 @@ export function TurnView({
   onCite,
   onShowSources,
   onRetry,
+  stepsOpen,
+  onToggleSteps,
 }: {
   run: RunState
   /** The /questions entry this turn asked, when it was one of them. */
@@ -52,6 +54,9 @@ export function TurnView({
   onCite: (turnId: number, n: number) => void
   onShowSources: (turnId: number) => void
   onRetry: (turnId: number) => void
+  /** Whether the pipeline steps are expanded; one setting for every turn, so it holds across questions. */
+  stepsOpen: boolean
+  onToggleSteps: () => void
 }) {
   const g = run.events.generate
   const failure = run.outcome && run.outcome.kind !== "done" ? run.outcome : null
@@ -72,7 +77,7 @@ export function TurnView({
           E
         </div>
         <div className="flex min-w-0 flex-col gap-3 pt-0.5">
-          <StageTrace run={run} />
+          <StageTrace run={run} open={stepsOpen} onToggle={onToggleSteps} />
 
           {g && (
             <div className="flex flex-wrap gap-1.5">

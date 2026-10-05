@@ -66,6 +66,7 @@ export function DemoApp() {
   const [evidenceTurnId, setEvidenceTurnId] = useState<number | null>(null)
   const [highlight, setHighlight] = useState<{ turnId: number; n: number; nonce: number } | null>(null)
   const [viewer, setViewer] = useState<ViewerState | null>(null)
+  const [stepsOpen, setStepsOpen] = useState(false)
   const abort = useRef<AbortController | null>(null)
   const viewerRequest = useRef(0)
 
@@ -185,7 +186,7 @@ export function DemoApp() {
     <div className="app-canvas min-h-dvh p-3 text-neutral-700 lg:p-4">
       <div
         className={cn(
-          "app-shell mx-auto grid min-h-[calc(100dvh-1.5rem)] grid-cols-1 gap-3 lg:grid-cols-[240px_minmax(480px,1fr)] xl:h-[calc(100dvh-2rem)] xl:min-h-0",
+          "app-shell mx-auto grid min-h-[calc(100dvh-1.5rem)] grid-cols-1 lg:min-h-[calc(100dvh-2rem)] gap-3 lg:grid-cols-[240px_minmax(480px,1fr)] xl:h-[calc(100dvh-2rem)] xl:min-h-0",
           wide ? "max-w-[1880px] xl:grid-cols-[240px_minmax(480px,1fr)_660px]" : "max-w-[1680px] xl:grid-cols-[240px_minmax(480px,1fr)_400px]"
         )}
       >
@@ -273,6 +274,8 @@ export function DemoApp() {
                     setTab("evidence")
                   }}
                   onRetry={retry}
+                  stepsOpen={stepsOpen}
+                  onToggleSteps={() => setStepsOpen((o) => !o)}
                 />
               ))}
             </ChatContainerContent>

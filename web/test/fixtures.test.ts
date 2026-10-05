@@ -14,7 +14,7 @@ const read = (...parts: string[]) => readFileSync(path.join(FIXTURES_DIR, ...par
 const questions: Question[] = parseQuestions(JSON.parse(read("questions.json")));
 const recorded = (id: string): RecordedEvent[] =>
   read("ask", `${id}.jsonl`)
-    .split("\n")
+    .split(/\r?\n/)
     .filter((l) => l.trim())
     .map((l) => JSON.parse(l) as RecordedEvent);
 

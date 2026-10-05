@@ -49,7 +49,7 @@ describe("every recorded answer", () => {
   const runs = readdirSync(path.join(FIXTURES_DIR, "ask"));
   it.each(runs)("%s: chips match generate.citations in first-cited order", (file) => {
     const line = readFileSync(path.join(FIXTURES_DIR, "ask", file), "utf8")
-      .split("\n")
+      .split(/\r?\n/)
       .map((l) => (l.trim() ? JSON.parse(l) : null))
       .find((e) => e?.event === "generate");
     const g = parseAskEvent("generate", line.data).data as Generate;

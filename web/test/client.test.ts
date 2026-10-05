@@ -15,7 +15,7 @@ const READY: Health = JSON.parse(readFileSync(path.join(FIXTURES_DIR, "health.js
 // The info_not_found run supplies realistic start..rerank payloads; generate, verify and done are written from the
 // contract for a refusal.
 const INFO_NOT_FOUND: RecordedEvent[] = readFileSync(path.join(FIXTURES_DIR, "ask", "qst_0484.jsonl"), "utf8")
-  .split("\n")
+  .split(/\r?\n/)
   .filter((l) => l.trim())
   .map((l) => JSON.parse(l) as RecordedEvent);
 const prefix = (until: string) => INFO_NOT_FOUND.slice(0, INFO_NOT_FOUND.findIndex((e) => e.event === until));

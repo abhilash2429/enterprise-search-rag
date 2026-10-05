@@ -47,7 +47,7 @@ export async function findRecordedQuestionId(q: string): Promise<string | null> 
 export async function readRecordedRun(questionId: string): Promise<RecordedEvent[]> {
   const text = await readFixtureText("ask", `${questionId}.jsonl`);
   return text
-    .split("\n")
+    .split(/\r?\n/)
     .filter((line) => line.trim() !== "")
     .map((line) => JSON.parse(line) as RecordedEvent);
 }

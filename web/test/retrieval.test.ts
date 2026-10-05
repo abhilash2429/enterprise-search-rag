@@ -9,7 +9,7 @@ import { foundByCounts, goldDocs, LISTS, retrievalRows } from "@/lib/retrieval";
 const questions = parseQuestions(JSON.parse(readFileSync(path.join(FIXTURES_DIR, "questions.json"), "utf8")));
 const load = (id: string) => {
   const events = readFileSync(path.join(FIXTURES_DIR, "ask", `${id}.jsonl`), "utf8")
-    .split("\n")
+    .split(/\r?\n/)
     .filter((l) => l.trim())
     .map((l) => JSON.parse(l))
     .map((e) => parseAskEvent(e.event, e.data));

@@ -7,7 +7,7 @@ import { FIXTURES_DIR, type RecordedEvent } from "@/lib/mock";
 import { IDLE, runReducer, stageViews, type RunState } from "@/lib/run";
 
 const events = readFileSync(path.join(FIXTURES_DIR, "ask", "qst_0147.jsonl"), "utf8")
-  .split("\n")
+  .split(/\r?\n/)
   .filter((l) => l.trim())
   .map((l) => JSON.parse(l) as RecordedEvent);
 

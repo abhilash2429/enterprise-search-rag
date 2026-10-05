@@ -23,7 +23,7 @@ const SIZE = { width: 1920, height: 1080 };
 const questions = JSON.parse(readFileSync(path.join(ROOT, "fixtures", "questions.json"), "utf8"));
 const index = questions.findIndex((q) => q.question_id === ID);
 if (index < 0 || index > 7) throw new Error(`${ID} is not one of the first 8 demo questions`);
-const lastT = JSON.parse(readFileSync(path.join(ROOT, "fixtures", "ask", `${ID}.jsonl`), "utf8").trim().split("\n").at(-1)).t;
+const lastT = JSON.parse(readFileSync(path.join(ROOT, "fixtures", "ask", `${ID}.jsonl`), "utf8").trim().split(/\r?\n/).at(-1)).t;
 
 mkdirSync(OUT, { recursive: true });
 const browser = await chromium.launch(
@@ -37,6 +37,11 @@ await page.waitForTimeout(1500);
 
 const started = Date.now();
 await page.keyboard.press(String(index + 1));
+// Let the collapsed step line change a couple of times, then expand it to show the steps stacking up.
+await page.waitForTimeout(Math.min(6000, lastT * 200));
+const toggle = page.locator('[data-role="steps-toggle"]');
+await toggle.hover();
+await toggle.click();
 await page.locator('[data-role="cost"]').waitFor({ timeout: lastT * 1000 + 30000 });
 console.log(`run finished in ${((Date.now() - started) / 1000).toFixed(1)} s (recorded total ${lastT} s)`);
 await page.waitForTimeout(2500);

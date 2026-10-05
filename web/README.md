@@ -10,9 +10,12 @@ The UI follows the M-Rag-B frontend (github.com/abhilash2429/M-Rag-B): same layo
 prompt-kit / shadcn primitives in `components/ui/` (copied unchanged).
 
 - Left: the benchmark questions from `/questions`, and "New session" to clear the conversation.
-- Middle: a chat thread. Each answer shows the pipeline as it runs (Route, Retrieve, Fuse, Rerank, Generate, Verify,
-  each pending, running with a live timer, or done with its real seconds), the routed sources, total time and cost, and
-  the answer as markdown with citation chips. `[n]`, `[n][m]`, `[n, m]` and the backend's `【n】` form all become chips.
+- Middle: a chat thread. Each answer opens with the pipeline steps. Collapsed, one line names the step in progress
+  and changes as each step starts ("Reranking 100 candidates"), then reads "Ran 6 steps"; the total time and cost sit
+  right-aligned on that line. Clicking it expands the steps into a vertical list that grows as each step starts
+  (Route, Retrieve, Fuse, Rerank, Generate, Verify), each with what it produced (the routed sources, the candidate
+  count, the citations, the verifier's result) and its real seconds, or a live timer while it runs. The setting holds
+  for later questions. Then the answer as markdown with citation chips. `[n]`, `[n][m]`, `[n, m]` and the backend's `【n】` form all become chips.
   Banners for a refusal and a partial answer; the "Not covered by the documents:" sentence is set apart; version pairs
   are noted; the confidence check sits under the answer ("Check the cited documents" with the verdict, reasoning and
   unsupported claims when flagged, a quiet "Verified" line otherwise, and the low-retrieval note). "Why this answer"
@@ -143,10 +146,11 @@ and refused streams, the `/health` pre-check, contract drift and abort.
 
 ### End-to-end check
 
-`e2e/run.mjs` drives the built app at 1920x1080: every recorded run (stage states and seconds, routed sources, total
-and cost, chips matching `generate.citations`, banners, version pairs, confidence, the rerank reorder, evidence order
+`e2e/run.mjs` drives the built app at 1920x1080: every recorded run (the collapsed step line, steps appearing as they
+start with their seconds, routed sources, total and cost on the header row, chips matching `generate.citations`, banners, version pairs, confidence, the rerank reorder, evidence order
 and cited marks, chip highlight and scroll, the document viewer, every Retrieval row, the gold answer), a synthetic
-refusal, an unknown question, the keyboard shortcuts, the four error states with Retry, recording mode, the benchmark
+refusal, an unknown question, the keyboard shortcuts, the four error states with Retry, recording mode (including no page scroll at 1920x1080 and
+1600x900 with an answer on screen, Evidence and Retrieval), the benchmark
 page against `README.md`, and axe WCAG 2.1 A/AA scans in both themes. Set the same speed for the
 server and the check:
 
