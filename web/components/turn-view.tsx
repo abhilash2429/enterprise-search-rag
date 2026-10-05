@@ -2,10 +2,13 @@
 
 import { AnswerBody, CitationChip } from "@/components/answer-body"
 import { ConfidenceNote } from "@/components/confidence-note"
+import { GoldAnswer } from "@/components/gold-answer"
+import { RunFailure } from "@/components/run-failure"
 import { StageTrace } from "@/components/stage-trace"
 import { WhyPanel } from "@/components/why-panel"
 import { Message, MessageContent } from "@/components/ui/message"
-import { failureMessage, type RunState } from "@/lib/run"
+import type { Health, Question } from "@/lib/api"
+import type { RunState } from "@/lib/run"
 import { cn } from "@/lib/utils"
 
 function Badge({ children, dark, role }: { children: React.ReactNode; dark?: boolean; role?: string }) {
@@ -34,17 +37,25 @@ function Skeleton() {
 
 export function TurnView({
   run,
+  question,
+  health,
   active,
   onCite,
   onShowSources,
+  onRetry,
 }: {
   run: RunState
+  /** The /questions entry this turn asked, when it was one of them. */
+  question: Question | null
+  health: Health | null
   active: number | null
   onCite: (turnId: number, n: number) => void
   onShowSources: (turnId: number) => void
+  onRetry: (turnId: number) => void
 }) {
   const g = run.events.generate
-  const failure = failureMessage(run.outcome)
+  const failure = run.outcome && run.outcome.kind !== "done" ? run.outcome : null
+  const titles = Object.fromEntries((g?.context ?? []).map((c) => [c.n, c.title]))
   const streaming = run.phase === "checking" || run.phase === "streaming"
   const cite = (n: number) => onCite(run.id, n)
 
@@ -75,11 +86,7 @@ export function TurnView({
             </div>
           )}
 
-          {failure && (
-            <p className="rounded-lg bg-neutral-200 px-3 py-2 text-[13px] font-medium text-neutral-800" data-banner="failure">
-              {failure}
-            </p>
-          )}
+          {failure && <RunFailure outcome={failure} health={health} onRetry={() => onRetry(run.id)} />}
 
           {!g && streaming && <Skeleton />}
 
@@ -90,19 +97,19 @@ export function TurnView({
                   None of the 10 retrieved documents answers this, so the system declined instead of guessing.
                 </p>
               )}
-              <AnswerBody answer={g.answer} contextSize={g.context.length} active={active} onCite={cite} />
+              <AnswerBody answer={g.answer} titles={titles} active={active} onCite={cite} />
               {g.version_pairs.length > 0 && (
                 <ul className="flex flex-col gap-1" data-role="version-pairs">
                   {g.version_pairs.map((p) => (
-                    <li key={`${p.a}-${p.b}`} className="text-[12.5px] leading-relaxed text-neutral-500" data-role="version-pair">
-                      Documents <CitationChip n={p.a} active={active === p.a} onCite={cite} /> and{" "}
-                      <CitationChip n={p.b} active={active === p.b} onCite={cite} /> look like versions of the same
+                    <li key={`${p.a}-${p.b}`} className="text-[12.5px] leading-relaxed text-neutral-600" data-role="version-pair">
+                      Documents <CitationChip n={p.a} active={active === p.a} onCite={cite} label={titles[p.a]} /> and{" "}
+                      <CitationChip n={p.b} active={active === p.b} onCite={cite} label={titles[p.b]} /> look like versions of the same
                       document; the newer value is used.
                     </li>
                   ))}
                 </ul>
               )}
-              <ConfidenceNote run={run} active={active} onCite={cite} />
+              <ConfidenceNote run={run} active={active} onCite={cite} titles={titles} />
             </>
           )}
 
@@ -117,6 +124,10 @@ export function TurnView({
               </button>
               <WhyPanel run={run} />
             </div>
+          )}
+
+          {question && run.events.fuse && !streaming && (
+            <GoldAnswer question={question} run={run} active={active} onCite={cite} />
           )}
         </div>
       </article>

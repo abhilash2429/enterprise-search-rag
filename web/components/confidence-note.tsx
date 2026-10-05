@@ -27,10 +27,12 @@ export function ConfidenceNote({
   run,
   active,
   onCite,
+  titles,
 }: {
   run: RunState
   active: number | null
   onCite: (n: number) => void
+  titles: Record<number, string>
 }) {
   const stages = run.events.start?.stages ?? []
   const v = run.events.verify
@@ -46,7 +48,7 @@ export function ConfidenceNote({
     )
   }
   if (v.skipped === "abstained" || !v.confidence) {
-    return <p className="text-[12.5px] text-neutral-500">Not verified: refusals are not checked.</p>
+    return <p className="text-[12.5px] text-neutral-600">Not verified: refusals are not checked.</p>
   }
   const c = v.confidence
   if (c.flagged === null) {
@@ -60,7 +62,7 @@ export function ConfidenceNote({
   }
   if (!c.flagged) {
     return (
-      <div className="flex flex-col gap-1 text-[12.5px] text-neutral-500" data-banner="verified">
+      <div className="flex flex-col gap-1 text-[12.5px] text-neutral-600" data-banner="verified">
         <p className="flex items-center gap-1.5 font-medium text-neutral-700">
           <CircleCheck className="size-4" aria-hidden />
           Verified against the cited documents
@@ -104,7 +106,7 @@ export function ConfidenceNote({
                     {VERDICT_LABEL[x.verdict]}
                   </span>
                   {x.claim}
-                  {x.cited.length > 0 && <CitationChips ns={x.cited} active={active} onCite={onCite} />}
+                  {x.cited.length > 0 && <CitationChips ns={x.cited} active={active} onCite={onCite} titles={titles} />}
                 </li>
               ))}
             </ul>

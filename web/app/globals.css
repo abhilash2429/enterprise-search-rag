@@ -187,3 +187,93 @@
     background-size: 32px 32px;
   }
 }
+
+/* ---------------------------------------------------------------------------------------------------------------
+   Additions for the enterprise-search demo. */
+
+/* Muted text darkened from M-Rag-B's #777773 so small labels meet WCAG AA (4.5:1) on white and on the canvas. */
+:root {
+  --muted-foreground: #5f5f5b;
+  --canvas: #f2f2ef;
+  --canvas-line: rgba(48, 48, 46, 0.025);
+  --focus: #1f6feb;
+}
+
+/* Dark theme: the UI is built from the neutral scale (plus slate and amber), so dark mode inverts those scales and
+   white. Every bg-neutral-* / text-neutral-* pairing keeps its contrast relationship, flipped. */
+.dark {
+  color-scheme: dark;
+  --canvas: #0e0e10;
+  --canvas-line: rgba(255, 255, 255, 0.03);
+  --focus: #6cb6ff;
+  --muted-foreground: #a8a8b0;
+  --color-white: #1b1b1e;
+  --color-neutral-50: #202024;
+  --color-neutral-100: #29292e;
+  --color-neutral-200: #313137;
+  --color-neutral-300: #45454d;
+  --color-neutral-400: #8d8d96;
+  --color-neutral-500: #a4a4ad;
+  --color-neutral-600: #bdbdc5;
+  --color-neutral-700: #d5d5db;
+  --color-neutral-800: #e6e6ea;
+  --color-neutral-900: #f0f0f3;
+  --color-neutral-950: #f8f8fa;
+  --color-slate-300: #4a525c;
+  --color-slate-400: #8a94a1;
+  --color-slate-500: #a3adb9;
+  --color-slate-600: #bcc5cf;
+  --color-slate-700: #d3d9e0;
+  --color-slate-800: #e3e7ec;
+  --color-slate-950: #f4f6f8;
+  --color-amber-50: #2a2210;
+  --color-amber-100: #3a2f15;
+  --color-amber-200: #5a4820;
+  --color-amber-600: #f2b84b;
+  --color-amber-700: #f5c461;
+  --color-amber-800: #f7cf7a;
+  --color-amber-900: #f9db99;
+  --color-amber-950: #fde9c0;
+}
+
+.app-canvas {
+  background:
+    linear-gradient(var(--canvas-line) 1px, transparent 1px),
+    linear-gradient(90deg, var(--canvas-line) 1px, transparent 1px),
+    var(--canvas);
+  background-size: 32px 32px;
+}
+
+/* Visible focus for keyboard users everywhere, in both themes. */
+:where(a, button, input, textarea, select, [tabindex], [role="tab"]):focus-visible {
+  outline: 2px solid var(--focus);
+  outline-offset: 2px;
+}
+
+/* Retrieval tab: BM25 is dark grey, dense is blue; rows found by one retriever only are tinted in that colour. */
+.retr-bm25 { background: #2e2e33; color: #ffffff; }
+.retr-dense { background: #1d5fbf; color: #ffffff; }
+.retr-bm25-routed { background: #ffffff; color: #2e2e33; box-shadow: inset 0 0 0 1.5px #2e2e33; }
+.retr-dense-routed { background: #ffffff; color: #174f9f; box-shadow: inset 0 0 0 1.5px #1d5fbf; }
+.retr-only-bm25 { background: #e6e6e3; color: #222226; }
+.retr-only-dense { background: #dbe8fb; color: #123b78; }
+.retr-row-bm25 { background: #f1f1ee; }
+.retr-row-dense { background: #eef4fd; }
+.dark .retr-bm25 { background: #e2e2e6; color: #141416; }
+.dark .retr-dense { background: #6fa8f5; color: #08172e; }
+.dark .retr-bm25-routed { background: #1b1b1e; color: #e2e2e6; box-shadow: inset 0 0 0 1.5px #e2e2e6; }
+.dark .retr-dense-routed { background: #1b1b1e; color: #8dbaf7; box-shadow: inset 0 0 0 1.5px #6fa8f5; }
+.dark .retr-only-bm25 { background: #3a3a40; color: #f0f0f3; }
+.dark .retr-only-dense { background: #1b3358; color: #d6e6ff; }
+.dark .retr-row-bm25 { background: #26262b; }
+.dark .retr-row-dense { background: #182436; }
+
+/* Recording mode (?record=1): one type step larger, no dev-only UI, cursor hidden after 2 s idle. */
+html[data-record] body { zoom: 1.125; }
+/* Zoom scales viewport units too, so heights tied to the viewport are divided back by the zoom factor. */
+html[data-record] .app-canvas { min-height: calc(100dvh / 1.125); }
+@media (min-width: 1280px) {
+  html[data-record] .app-shell { height: calc((100dvh - 2rem) / 1.125); min-height: 0; }
+}
+html[data-record] .dev-only { display: none !important; }
+html[data-record][data-idle] * { cursor: none !important; }

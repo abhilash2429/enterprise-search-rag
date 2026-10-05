@@ -11,6 +11,7 @@ import { mkdirSync, readdirSync, readFileSync } from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 
+import AxeBuilder from "@axe-core/playwright";
 import { chromium } from "playwright";
 
 const ROOT = path.dirname(path.dirname(fileURLToPath(import.meta.url)));
@@ -27,6 +28,14 @@ const readRun = (id) =>
     .filter((l) => l.trim())
     .map((l) => JSON.parse(l));
 const fmt = (s) => `${s < 0.1 ? s.toFixed(2) : s.toFixed(1)} s`;
+const frame = (event, data) => `event: ${event}\ndata: ${JSON.stringify(data)}\n\n`;
+const sse = (body) => ({ status: 200, headers: { "Content-Type": "text/event-stream" }, body });
+const LISTS = ["bm25", "dense", "bm25_routed", "dense_routed"];
+const foundBy = (r) => {
+  const b = r.bm25 !== null || r.bm25_routed !== null;
+  const d = r.dense !== null || r.dense_routed !== null;
+  return b && d ? "both" : b ? "bm25" : "dense";
+};
 const SOURCE_LABEL = {
   slack: "Slack",
   gmail: "Gmail",
@@ -94,6 +103,16 @@ async function checkRecorded(browser, q) {
       c.eq(await page.locator(`[data-stage="${s}"]`).getAttribute("data-status"), "pending", `${s} pending while reranking`);
     }
     c.ok(await page.locator('[data-role="fused-preview"]').isVisible(), "fused candidates shown while reranking");
+    c.eq(await page.locator("[data-fused-rank]").count(), 10, "fused top 10 shown before rerank");
+
+    // When rerank arrives the fused order holds, each card marked kept or dropped, then cards move to reranked slots.
+    await page.locator('[data-phase="judging"]').waitFor({ timeout: 60000 });
+    const top10 = D.fuse.candidates.slice(0, 10).map((x) => x.doc_id);
+    const kept = top10.filter((id) => D.rerank.hits.some((h) => h.doc_id === id)).length;
+    c.eq(await page.locator('[data-verdict="kept"]').count(), kept, "fused cards marked kept");
+    c.eq(await page.locator('[data-verdict="dropped"]').count(), 10 - kept, "fused cards marked dropped");
+    await page.locator('[data-phase="reranked"]').waitFor({ timeout: 5000 });
+    c.ok(true, "reorder settles on the reranked order");
   }
 
   // The cost renders only after `done` (the live timer alone can pass through the recorded total).
@@ -101,6 +120,8 @@ async function checkRecorded(browser, q) {
   c.ok((await page.locator('[data-role="total"]').innerText()).startsWith(fmt(D.done.seconds.total)), "total time");
   const wall = (Date.now() - t0) / 1000;
   c.ok(wall >= (lastT / SPEED) * 0.9 && wall <= lastT / SPEED + 4, `replay took ${wall.toFixed(1)} s for ${lastT} s at ${SPEED}x`);
+
+  await page.locator('[data-role="hits"]').waitFor({ timeout: 5000 });
 
   // Timeline: one card per start.stages entry, all done with the event's own seconds; route shows its sources.
   const stages = await page.locator("[data-stage]").evaluateAll((els) => els.map((e) => e.dataset.stage));
@@ -168,6 +189,58 @@ async function checkRecorded(browser, q) {
   }, n);
   c.ok(inView, `doc ${n} scrolled into view`);
 
+  // Retrieval tab (R): one row per fused candidate, ranks per list, RRF, reranked position, who found it.
+  await page.keyboard.press("r");
+  await page.locator('[data-role="retrieval"]').waitFor({ timeout: 3000 });
+  c.eq(await page.locator("#tab-retrieval").getAttribute("aria-selected"), "true", "R opens the Retrieval tab");
+  const shown = await page.locator("tr[data-fused-rank]").evaluateAll((trs) =>
+    trs.map((tr) => {
+      const td = [...tr.querySelectorAll("td")].map((x) => x.textContent.trim());
+      return { doc: tr.dataset.doc, foundBy: tr.dataset.foundBy, ranks: td.slice(2, 6), rrf: td[6], top: td[7] };
+    }),
+  );
+  const top = new Map(D.rerank.order.slice(0, 10).map((o, i) => [o.doc_id, String(i + 1)]));
+  const expected = D.fuse.candidates.map((x) => ({
+    doc: x.doc_id,
+    foundBy: foundBy(x.ranks),
+    ranks: LISTS.map((l) => (x.ranks[l] === null ? "" : String(x.ranks[l]))),
+    rrf: x.rrf_score.toFixed(4),
+    top: top.get(x.doc_id) ?? "",
+  }));
+  c.eq(shown, expected, "retrieval rows: ranks, RRF, top 10 and found-by for all 100");
+  const counts = { both: 0, bm25: 0, dense: 0 };
+  for (const e of expected) counts[e.foundBy] += 1;
+  for (const k of Object.keys(counts)) {
+    c.eq(await page.locator(`[data-count="${k}"]`).innerText(), String(counts[k]), `${k} count`);
+  }
+  if (SHOTS && q.question_id === "qst_0147") await page.screenshot({ path: path.join(SHOTS, "retrieval-qst_0147.png") });
+  await page.keyboard.press("r");
+  await page.locator('[data-role="hits"]').waitFor({ timeout: 3000 });
+
+  // Gold answer toggle: the benchmark's gold answer and where each gold document landed.
+  await page.getByRole("button", { name: "Show gold answer" }).click();
+  c.eq(await page.locator('[data-role="gold-answer"]').innerText(), q.gold_answer.trim(), "gold answer text");
+  const gold = await page.locator("[data-gold]").evaluateAll((els) => els.map((e) => [e.dataset.gold, e.dataset.status]));
+  c.eq(
+    gold,
+    q.expected_doc_ids.map((id) => [id, D.rerank.hits.some((h) => h.doc_id === id) ? "top10" : "missed"]),
+    "gold documents placed",
+  );
+  for (const id of q.expected_doc_ids) {
+    const hit = D.rerank.hits.find((h) => h.doc_id === id);
+    const text = await page.locator(`[data-gold="${id}"]`).innerText();
+    if (hit) c.ok(text.includes(String(hit.rank)) && text.includes(hit.title), `gold ${id} rank ${hit.rank}`);
+    else {
+      const i = D.fuse.candidates.findIndex((x) => x.doc_id === id);
+      c.ok(text.includes(i === -1 ? "not among the 100" : `fused #${i + 1} of 100`), `gold ${id} missed detail`);
+    }
+  }
+  if (SHOTS && q.question_id === "qst_0037") {
+    await page.locator('[data-role="gold-panel"]').scrollIntoViewIfNeeded();
+    await page.screenshot({ path: path.join(SHOTS, "gold-qst_0037.png") });
+  }
+  await page.getByRole("button", { name: "Hide gold answer" }).click();
+
   if (SHOTS) {
     // Frame the confidence panel for flagged answers whose banner is below the fold.
     await page.evaluate(() => {
@@ -182,8 +255,8 @@ async function checkRecorded(browser, q) {
   await page.locator(`[data-rank="${n}"] button`).click();
   const content = page.locator('[data-role="document-content"]');
   await content.waitFor({ timeout: 5000 });
-  const shown = await content.evaluate((e) => e.textContent);
-  c.eq(shown.length, doc.content.length, "drawer shows the full content");
+  const full = await content.evaluate((e) => e.textContent);
+  c.eq(full.length, doc.content.length, "drawer shows the full content");
   c.ok((await page.locator('[data-role="drawer"] h2').innerText()) === doc.title, "drawer title");
   await page.keyboard.press("Escape");
   c.eq(await page.locator('[data-role="drawer"]').count(), 0, "drawer closes on Escape");
@@ -248,6 +321,165 @@ async function checkUnknown(browser) {
   return c;
 }
 
+async function waitDone(page, timeoutMs) {
+  await page.locator('[data-role="cost"]').last().waitFor({ timeout: timeoutMs });
+}
+const runMs = (id) => (readRun(id).at(-1).t / SPEED) * 1000 + 20000;
+
+async function checkKeyboard(browser, questions) {
+  const c = new Check("keyboard");
+  const { page, errors, close } = await newPage(browser);
+  await page.keyboard.press("/");
+  c.eq(await page.evaluate(() => document.activeElement?.getAttribute("aria-label")), "Question", "/ focuses the input");
+  await page.keyboard.press("Escape");
+  await page.evaluate(() => document.activeElement instanceof HTMLElement && document.activeElement.blur());
+  await page.keyboard.press("1");
+  await page.locator("[data-turn]").first().waitFor({ timeout: 3000 });
+  c.ok((await page.locator("[data-turn]").first().innerText()).includes(questions[0].question), "1 asks the first demo question");
+  await waitDone(page, runMs(questions[0].question_id));
+  await page.keyboard.press("R");
+  c.eq(await page.locator('#tab-retrieval').getAttribute("aria-selected"), "true", "R toggles to Retrieval");
+  await page.keyboard.press("r");
+  c.eq(await page.locator('#tab-evidence').getAttribute("aria-selected"), "true", "R toggles back to Evidence");
+  // Typing in the input does not trigger shortcuts.
+  await page.keyboard.press("/");
+  await page.keyboard.type("2 r");
+  c.eq(await page.locator("[data-turn]").count(), 1, "digits typed in the input do not ask a question");
+  c.eq(await page.locator('#tab-evidence').getAttribute("aria-selected"), "true", "r typed in the input does not switch tabs");
+  // Visible focus ring on keyboard focus.
+  await page.keyboard.press("Escape");
+  await page.evaluate(() => document.activeElement instanceof HTMLElement && document.activeElement.blur());
+  await page.keyboard.press("Tab");
+  const outline = await page.evaluate(() => getComputedStyle(document.activeElement).outlineStyle);
+  c.ok(outline !== "none", `focus ring visible (outline ${outline})`);
+  c.eq(errors, [], "no page errors");
+  await close();
+  return c;
+}
+
+/** Each failure shows a clear message and a Retry that recovers once the backend is fine again. */
+async function checkErrors(browser, q) {
+  const c = new Check("error states");
+  const D = Object.fromEntries(readRun(q.question_id).map((e) => [e.event, e.data]));
+  const ready = readJson("health.json");
+  const cases = [
+    ["busy", "**/mock-api/health", (route) => route.fulfill({ json: { ...ready, busy: true } }), "Another question is running"],
+    ["error", "**/mock-api/ask?*", (route) => route.fulfill(sse(frame("start", D.start) + frame("error", { message: "RuntimeError: CUDA out of memory" }))), "CUDA out of memory"],
+    ["disconnected", "**/mock-api/ask?*", (route) => route.fulfill(sse(frame("start", D.start) + frame("route", D.route))), "The connection dropped"],
+  ];
+  for (const [kind, url, handler, text] of cases) {
+    const { page, errors, close } = await newPage(browser);
+    await page.route(url, handler);
+    await page.locator(`[data-question="${q.question_id}"]`).click();
+    const banner = page.locator(`[data-failure="${kind}"]`);
+    await banner.waitFor({ timeout: 10000 });
+    c.ok((await banner.innerText()).includes(text), `${kind}: message`);
+    await page.unroute(url);
+    await banner.getByRole("button", { name: /Retry/ }).click();
+    await waitDone(page, runMs(q.question_id));
+    c.eq(await page.locator("[data-turn]").count(), 1, `${kind}: retry replaces the failed turn and finishes`);
+    c.eq(errors.filter((e) => !e.includes("Failed to load resource")), [], `${kind}: no page errors`);
+    await close();
+  }
+
+  // Loading: /health says loading for the first few polls, then ready; the question reruns on its own.
+  const { page, errors, close } = await newPage(browser);
+  let calls = 0;
+  await page.route("**/mock-api/health", (route) => {
+    calls += 1;
+    return route.fulfill({ json: calls <= 3 ? { ...ready, status: "loading" } : ready });
+  });
+  await page.reload();
+  await page.locator('[data-banner="health"]').waitFor({ timeout: 5000 });
+  c.ok((await page.locator('[data-banner="health"]').innerText()).includes("Loading indexes"), "loading: banner on start");
+  await page.locator(`[data-question="${q.question_id}"]`).click();
+  await page.locator('[data-failure="loading"]').waitFor({ timeout: 5000 });
+  c.ok((await page.locator('[data-failure="loading"]').innerText()).includes("Loading indexes"), "loading: message");
+  await waitDone(page, runMs(q.question_id) + 10000);
+  c.ok(calls >= 4, `loading: polled /health (${calls} calls) and reran when ready`);
+  c.eq(await page.locator('[data-banner="health"]').count(), 0, "loading: banner clears when ready");
+  c.eq(errors, [], "loading: no page errors");
+  await close();
+  return c;
+}
+
+async function checkRecordMode(browser) {
+  const c = new Check("record mode");
+  const context = await browser.newContext({ viewport: VIEWPORT });
+  const page = await context.newPage();
+  await page.goto(`${BASE}/?record=1`);
+  await page.locator("[data-question]").first().waitFor();
+  const visibleDev = await page.locator(".dev-only").evaluateAll((els) => els.filter((e) => e.offsetParent !== null).length);
+  c.eq(visibleDev, 0, "dev-only UI hidden");
+  c.eq(await page.evaluate(() => getComputedStyle(document.body).zoom), "1.125", "type one step larger");
+  const box = await page.locator('textarea[aria-label="Question"]').boundingBox();
+  c.ok(box && box.y + box.height <= VIEWPORT.height, "input still on screen");
+  await page.mouse.move(400, 400);
+  c.eq(await page.evaluate(() => "idle" in document.documentElement.dataset), false, "cursor visible after moving");
+  await page.waitForTimeout(2300);
+  c.eq(await page.evaluate(() => "idle" in document.documentElement.dataset), true, "cursor hidden after 2 s idle");
+  c.eq(await page.evaluate(() => getComputedStyle(document.body).cursor), "none", "cursor: none applied");
+  await page.mouse.move(500, 500);
+  c.eq(await page.evaluate(() => "idle" in document.documentElement.dataset), false, "cursor back on movement");
+  await context.close();
+  return c;
+}
+
+async function checkBenchmark(browser) {
+  const c = new Check("benchmark page");
+  const { page, errors, close } = await newPage(browser);
+  await page.goto(`${BASE}/benchmark`);
+  const readme = readFileSync(path.join(ROOT, "..", "README.md"), "utf8").split("\n");
+  const cells = (l) => l.trim().replace(/^\||\|$/g, "").split("|").map((x) => x.trim());
+  const tables = await page.locator("[data-table]").evaluateAll((els) =>
+    els.map((el) => ({
+      id: el.dataset.table,
+      head: [...el.querySelectorAll("th")].map((th) => th.textContent.trim()),
+      rows: [...el.querySelectorAll("tbody tr")].map((tr) => [...tr.querySelectorAll("[data-cell]")].map((x) => x.textContent)),
+    })),
+  );
+  c.eq(tables.map((t) => t.id), ["heldOut", "recallByType", "devRetrieval", "devDense", "devEndToEnd", "latency", "confidenceFlag"], "all 7 README tables");
+  for (const t of tables) {
+    const at = readme.findIndex((l) => l.startsWith("|") && cells(l).join("\u0000") === t.head.join("\u0000"));
+    const rows = [];
+    for (let i = at + 2; readme[i]?.startsWith("|"); i++) rows.push(cells(readme[i]));
+    c.ok(at > 0, `${t.id}: header found in README`);
+    c.eq(t.rows, rows, `${t.id}: every rendered cell equals README`);
+  }
+  c.eq(await page.locator("[data-headline]").count(), 4, "headline rows marked");
+  c.eq(errors, [], "no page errors");
+  if (SHOTS) await page.screenshot({ path: path.join(SHOTS, "benchmark.png"), fullPage: true });
+  await close();
+  return c;
+}
+
+/** WCAG 2 A/AA rules (contrast included) on a finished, flagged answer with the gold panel open, in both themes. */
+async function checkA11y(browser, q) {
+  const c = new Check("accessibility");
+  for (const theme of ["light", "dark"]) {
+    const { page, close } = await newPage(browser);
+    await page.goto(`${BASE}/?theme=${theme}`);
+    await page.locator(`[data-question="${q.question_id}"]`).click();
+    await waitDone(page, runMs(q.question_id));
+    await page.locator('[data-role="hits"]').waitFor();
+    await page.getByRole("button", { name: "Show gold answer" }).click();
+    await page.waitForTimeout(600);
+    for (const view of ["evidence", "retrieval"]) {
+      if (view === "retrieval") await page.keyboard.press("r");
+      await page.waitForTimeout(400);
+      const result = await new AxeBuilder({ page }).withTags(["wcag2a", "wcag2aa", "wcag21a", "wcag21aa"]).analyze();
+      const v = result.violations.map((x) => `${x.id} (${x.nodes.length}): ${x.nodes[0]?.target.join(" ")}`);
+      c.eq(v, [], `${theme} ${view}: no WCAG A/AA violations`);
+    }
+    if (SHOTS && theme === "dark") await page.screenshot({ path: path.join(SHOTS, "dark-retrieval.png") });
+    await page.goto(`${BASE}/benchmark?theme=${theme}`);
+    const bench = await new AxeBuilder({ page }).withTags(["wcag2a", "wcag2aa", "wcag21a", "wcag21aa"]).analyze();
+    c.eq(bench.violations.map((x) => `${x.id} (${x.nodes.length}): ${x.nodes[0]?.target.join(" ")}`), [], `${theme} benchmark: no WCAG A/AA violations`);
+    await close();
+  }
+  return c;
+}
+
 const questions = readJson("questions.json");
 if (readdirSync(path.join(FIXTURES, "ask")).length !== questions.length) throw new Error("fixture count mismatch");
 if (SHOTS) mkdirSync(SHOTS, { recursive: true });
@@ -256,10 +488,23 @@ const browser = await chromium.launch(
   process.env.PLAYWRIGHT_CHROMIUM_PATH ? { executablePath: process.env.PLAYWRIGHT_CHROMIUM_PATH } : {},
 );
 const started = Date.now();
+/** A scenario that throws (a timeout, a missing element) counts as one failure instead of aborting the run. */
+const safe = (name, run) =>
+  run().catch((e) => {
+    const c = new Check(name);
+    c.ok(false, `threw: ${String(e).split("\n")[0]}`);
+    return c;
+  });
+const pick = (id) => questions.find((x) => x.question_id === id) ?? questions[0];
 const results = await Promise.all([
-  ...questions.map((q) => checkRecorded(browser, q)),
-  checkRefusal(browser),
-  checkUnknown(browser),
+  ...questions.map((q) => safe(q.question_id, () => checkRecorded(browser, q))),
+  safe("synthetic refusal", () => checkRefusal(browser)),
+  safe("unknown question", () => checkUnknown(browser)),
+  safe("keyboard", () => checkKeyboard(browser, questions)),
+  safe("error states", () => checkErrors(browser, pick("qst_0459"))),
+  safe("record mode", () => checkRecordMode(browser)),
+  safe("benchmark page", () => checkBenchmark(browser)),
+  safe("accessibility", () => checkA11y(browser, pick("qst_0037"))),
 ]);
 await browser.close();
 

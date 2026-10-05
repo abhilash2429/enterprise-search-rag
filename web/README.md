@@ -21,7 +21,36 @@ prompt-kit / shadcn primitives in `components/ui/` (copied unchanged).
   before reranking, cited marker). While reranking runs it shows the top of the fused list. A citation chip highlights
   and scrolls to its document; "Open document" shows the full text from `/documents/{id}`.
 
+- Retrieval tab (next to Evidence, or press R): all 100 fused candidates with their 1-based rank in BM25, dense,
+  BM25 routed and dense routed (blank when that list missed it; filled chips for the full lists, outlined for the
+  routed ones), the RRF score, and the reranked position for the top 10. Rows found by only one retriever (BM25 or
+  dense, counting its routed list as the same retriever) are tinted and labelled, with counts at the top.
+- When rerank arrives, the evidence rail first shows the fused top 10, marks each kept (with its new rank) or dropped,
+  then moves the documents to their reranked positions; documents promoted from deeper in the fused list slide in.
+- "Show gold answer" under answers to questions from `/questions`: the benchmark's gold answer and, for each gold
+  document, its rank in the top 10 or that it was missed (with its fused rank when it was a candidate).
+- Errors say what happened and offer Retry: indexes loading (polls `/health` every 2 s and reruns the question when
+  ready), another question running, an `error` event, a dropped connection, a response that breaks the contract.
+
+`/benchmark` shows the README's results tables (held-out test, recall@10 by type, dev ablations, serving latency,
+confidence flag) from `lib/results.ts`, which holds every cell as the README's exact text; `test/results.test.ts`
+re-parses `README.md` and fails on any difference.
+
 `/raw` keeps the bare page that prints the raw event stream.
+
+### Recording
+
+| Key | Does |
+|---|---|
+| `/` | Focus the question input |
+| Enter | Ask |
+| `1`-`8` | Ask demo question 1-8 |
+| `R` | Toggle the Retrieval tab |
+| Esc | Close the document viewer |
+
+`?record=1` hides dev-only UI (mode label, key hints, API details, theme button), makes everything one step larger
+and hides the cursor after 2 s without movement. `?theme=dark` or `?theme=light` picks the theme (the button in the
+header does too, and remembers it). Both themes pass axe's WCAG 2.1 A/AA rules, contrast included, in the e2e check.
 
 ## Setup
 
@@ -103,6 +132,7 @@ type. `createClient()` exposes `getHealth`, `getQuestions`, `getDocument` and `a
 | `npm run typecheck` | `next typegen` then `tsc --noEmit`, including the schema-equals-contract check |
 | `npm test` | Vitest |
 | `npm run e2e` | Every fixture end to end in headless Chromium against a running app (see below) |
+| `npm run e2e:video` | Records one full run in recording mode as a 1920x1080 video |
 
 The tests run the client against the mock route handlers in process (no server, no browser): every recorded run replays
 through `ask` and each event parses into its type and equals the recorded payload, events follow the contract order,
@@ -114,8 +144,10 @@ and refused streams, the `/health` pre-check, contract drift and abort.
 ### End-to-end check
 
 `e2e/run.mjs` drives the built app at 1920x1080: every recorded run (stage states and seconds, routed sources, total
-and cost, chips matching `generate.citations`, banners, version pairs, confidence, evidence order and cited marks, chip
-highlight and scroll, the document viewer), a synthetic refusal and an unknown question. Set the same speed for the
+and cost, chips matching `generate.citations`, banners, version pairs, confidence, the rerank reorder, evidence order
+and cited marks, chip highlight and scroll, the document viewer, every Retrieval row, the gold answer), a synthetic
+refusal, an unknown question, the keyboard shortcuts, the four error states with Retry, recording mode, the benchmark
+page against `README.md`, and axe WCAG 2.1 A/AA scans in both themes. Set the same speed for the
 server and the check:
 
 ```bash
@@ -125,3 +157,7 @@ NEXT_PUBLIC_MOCK_SPEED=10 npm run e2e                                           
 
 It needs a Chromium for Playwright (`npx playwright install chromium` once, or `PLAYWRIGHT_CHROMIUM_PATH`).
 `E2E_SHOTS=<dir>` saves a screenshot of each finished answer.
+
+`e2e/record-video.mjs` (`npm run e2e:video`) records one full run (default `qst_0421`) in recording mode the way a
+presenter would drive it: key `2`, the whole pipeline at the server's pacing, a citation, its document, then `R`.
+`E2E_VIDEO=<dir>` sets the output folder, `E2E_QUESTION` and `E2E_THEME` the run.

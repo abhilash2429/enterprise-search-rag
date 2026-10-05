@@ -14,17 +14,21 @@ export function CitationChip({
   n,
   active,
   onCite,
+  label,
 }: {
   n: number
   active?: boolean
   onCite: (n: number) => void
+  /** The cited document's title, for screen readers. */
+  label?: string
 }) {
   return (
     <button
       type="button"
       data-cite={n}
       onClick={() => onCite(n)}
-      aria-label={`Show document ${n}`}
+      aria-label={label ? `Citation ${n}: ${label}` : `Citation ${n}`}
+      aria-pressed={active ?? false}
       className={cn(
         "mx-0.5 inline-flex min-w-[1.35rem] cursor-pointer items-center justify-center rounded px-1.5 align-[1px] text-[11px] font-semibold tabular-nums no-underline transition-colors",
         active ? "bg-neutral-800 text-white" : "bg-neutral-100 text-neutral-700 hover:bg-neutral-200 hover:text-neutral-950"
@@ -35,17 +39,27 @@ export function CitationChip({
   )
 }
 
-export function CitationChips({ ns, active, onCite }: { ns: number[]; active: number | null; onCite: (n: number) => void }) {
+export function CitationChips({
+  ns,
+  active,
+  onCite,
+  titles,
+}: {
+  ns: number[]
+  active: number | null
+  onCite: (n: number) => void
+  titles?: Record<number, string>
+}) {
   return (
     <span className="whitespace-nowrap">
       {ns.map((n) => (
-        <CitationChip key={n} n={n} active={active === n} onCite={onCite} />
+        <CitationChip key={n} n={n} active={active === n} onCite={onCite} label={titles?.[n]} />
       ))}
     </span>
   )
 }
 
-function useComponents(active: number | null, onCite: (n: number) => void) {
+function useComponents(active: number | null, onCite: (n: number) => void, titles: Record<number, string>) {
   return useMemo<Partial<Components>>(
     () => ({
       a({ href, children, ...props }) {
@@ -64,7 +78,7 @@ function useComponents(active: number | null, onCite: (n: number) => void) {
           )
         }
         const n = Number(target.slice("#cite-".length))
-        return <CitationChip n={n} active={active === n} onCite={onCite} />
+        return <CitationChip n={n} active={active === n} onCite={onCite} label={titles[n]} />
       },
       table({ children }) {
         return (
@@ -76,7 +90,7 @@ function useComponents(active: number | null, onCite: (n: number) => void) {
         )
       },
     }),
-    [active, onCite]
+    [active, onCite, titles]
   )
 }
 
@@ -86,17 +100,19 @@ function useComponents(active: number | null, onCite: (n: number) => void) {
  */
 export function AnswerBody({
   answer,
-  contextSize,
+  titles,
   active,
   onCite,
 }: {
   answer: string
-  contextSize: number
+  /** Context titles by n; also the context size for marker validation. */
+  titles: Record<number, string>
   active: number | null
   onCite: (n: number) => void
 }) {
+  const contextSize = Object.keys(titles).length
   const { body, notCovered } = useMemo(() => prepareAnswer(answer, contextSize), [answer, contextSize])
-  const components = useComponents(active, onCite)
+  const components = useComponents(active, onCite, titles)
 
   return (
     <div className="flex flex-col gap-3">

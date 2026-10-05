@@ -45,7 +45,7 @@ export function DocumentViewer({ state, onClose }: { state: ViewerState | null; 
 
   return (
     <div
-      className="fixed inset-0 z-50 flex items-center justify-center bg-slate-950/68 p-4 backdrop-blur-[2px]"
+      className="fixed inset-0 z-50 flex items-center justify-center bg-black/70 p-4 backdrop-blur-[2px]"
       onClick={(event) => {
         if (event.currentTarget === event.target) onClose()
       }}
@@ -62,7 +62,7 @@ export function DocumentViewer({ state, onClose }: { state: ViewerState | null; 
             <h2 id="document-viewer-title" className="truncate text-[15px] font-bold text-slate-950">
               {state.title}
             </h2>
-            <p className="mt-0.5 flex items-center gap-2 text-[12px] font-medium text-slate-500">
+            <p className="mt-0.5 flex items-center gap-2 text-[12px] font-medium text-slate-600">
               <SourceTag source={state.source} />
               <span className="font-mono text-[11px]">{state.doc_id}</span>
             </p>

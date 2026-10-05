@@ -47,18 +47,25 @@ export function StageTrace({ run }: { run: RunState }) {
 
   return (
     <div className="flex flex-col gap-2">
-      <ol className="flex flex-wrap items-center gap-1.5" aria-label="Pipeline">
+      <ol className="flex flex-wrap items-center gap-1.5" aria-label="Pipeline stages">
         {views.map((v) => (
           <li
             key={v.stage}
             data-stage={v.stage}
             data-status={v.status}
+            aria-label={`${STAGE_LABEL[v.stage]}: ${
+              v.status === "done" && v.seconds !== null
+                ? `done in ${formatSeconds(v.seconds)}`
+                : v.status === "running"
+                  ? "running"
+                  : v.status
+            }`}
             className={cn(
               "inline-flex items-center gap-1.5 rounded-full px-2.5 py-1 text-[12px] font-medium transition-colors",
               v.status === "done" && "bg-neutral-100 text-neutral-700",
               v.status === "running" && "bg-neutral-800 text-white",
-              v.status === "pending" && "text-neutral-400 ring-1 ring-inset ring-neutral-200",
-              v.status === "stopped" && "text-neutral-400 ring-1 ring-inset ring-neutral-200",
+              v.status === "pending" && "text-neutral-600 ring-1 ring-inset ring-neutral-300",
+              v.status === "stopped" && "text-neutral-600 ring-1 ring-inset ring-neutral-300",
               v.status === "failed" && "bg-neutral-200 text-neutral-900"
             )}
           >
@@ -87,8 +94,8 @@ export function StageTrace({ run }: { run: RunState }) {
         </li>
       </ol>
       {sources && (
-        <p className="flex flex-wrap items-center gap-x-3 gap-y-1 text-[12px] font-medium text-neutral-500" data-role="routed">
-          <span className="text-[10.5px] font-semibold uppercase tracking-[0.09em] text-neutral-400">Routed to</span>
+        <p className="flex flex-wrap items-center gap-x-3 gap-y-1 text-[12px] font-medium text-neutral-600" data-role="routed">
+          <span className="text-[10.5px] font-semibold uppercase tracking-[0.09em] text-neutral-600">Routed to</span>
           {sources.length > 0 ? (
             sources.map((s) => <SourceTag key={s} source={s} className="text-neutral-700" />)
           ) : (
@@ -97,7 +104,7 @@ export function StageTrace({ run }: { run: RunState }) {
         </p>
       )}
       {active && label && (
-        <div role="status" aria-live="polite" className="py-0.5 text-[13px] text-neutral-500">
+        <div role="status" aria-live="polite" className="py-0.5 text-[13px] text-neutral-600">
           <TextShimmer duration={2.4} className="motion-reduce:animate-none">
             {label}
           </TextShimmer>

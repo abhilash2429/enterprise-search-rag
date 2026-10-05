@@ -20,7 +20,7 @@ export function WhyPanel({ run }: { run: RunState }) {
 
   return (
     <Reasoning>
-      <ReasoningTrigger className="text-[12px] font-medium text-neutral-500 hover:text-neutral-800">
+      <ReasoningTrigger className="text-[12px] font-medium text-neutral-600 hover:text-neutral-800">
         Why this answer
       </ReasoningTrigger>
       <ReasoningContent className="mt-2" contentClassName="bg-neutral-50 px-3 py-2.5">
