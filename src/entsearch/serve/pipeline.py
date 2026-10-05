@@ -6,6 +6,7 @@ served it and per-stage latency.
 """
 
 import time
+from collections.abc import Callable
 from dataclasses import dataclass, field
 from pathlib import Path
 
@@ -18,6 +19,9 @@ from entsearch.retrieval import router
 from entsearch.retrieval.rrf import rrf
 
 DEPTH, RRF_K, SNIPPET = 100, 60, 300
+LISTS = ("bm25", "dense", "bm25_routed", "dense_routed")
+# Optional progress callback: emit(event, payload) after each stage (the demo API streams these; docs/demo-api.md).
+Emit = Callable[[str, dict], None]
 
 
 @dataclass
@@ -122,8 +126,9 @@ class Pipeline:
     def search(self, query: str, k: int = 10) -> SearchResult:
         return self._search(query, k)[0]
 
-    def _search(self, query: str, k: int) -> tuple[SearchResult, float]:
+    def _search(self, query: str, k: int, emit: Emit | None = None) -> tuple[SearchResult, float]:
         t, cost = {}, 0.0
+        emit = emit or (lambda event, payload: None)
         clock = time.perf_counter()
 
         def lap(name: str) -> None:
@@ -136,17 +141,26 @@ class Pipeline:
         if self.cfg.router:
             routed, cost = self.route(query)
             lap("route")
+            emit("route", {"sources": routed, "seconds": t["route"]})
         filters = [None, routed] if routed else [None]
         dense = [[] for _ in filters]
         if self.dense is not None:
             dense = self.dense.search_many(self.encoder(query), DEPTH, filters)
         lists = [l for f, hits in zip(filters, dense) for l in (self._bm25(query, f), [d for d, _ in hits])]
         lap("retrieve")
+        named = dict(zip(LISTS, lists))
+        emit("retrieve", {"lists": {name: named.get(name) for name in LISTS}, "seconds": t["retrieve"]})
         fused = rrf([l for l in lists if l], k=RRF_K, top_n=DEPTH)
         ids = [d for d, _ in fused]
         fused_score = dict(fused)
         docs = self.docs.get(ids)
         lap("fetch")
+        rank = {name: {d: r for r, d in enumerate(l, 1)} for name, l in named.items()}
+        emit("fuse", {"candidates": [
+            {"doc_id": d, "source": docs[d][0], "title": docs[d][1], "rrf_score": s,
+             "ranks": {name: rank[name].get(d) if name in rank else None for name in LISTS}}
+            for d, s in fused
+        ], "seconds": t["fetch"]})
 
         rerank: dict[str, float] = {}
         if self.reranker is not None and ids:
@@ -155,6 +169,13 @@ class Pipeline:
             rerank = dict(zip([d for d, _ in fused], scores.tolist()))
             self._release_gpu_cache()
             lap("rerank")
+            fused_rank = {d: r for r, (d, _) in enumerate(fused, 1)}
+            emit("rerank", {
+                "hits": [{"rank": r, "doc_id": d, "source": docs[d][0], "title": docs[d][1], "snippet": docs[d][2][:SNIPPET],
+                          "rerank_score": rerank[d], "fused_rank": fused_rank[d]} for r, d in enumerate(ids[:k], 1)],
+                "order": [{"doc_id": d, "rerank_score": rerank[d]} for d in ids],
+                "seconds": t["rerank"],
+            })
 
         hits = [
             Hit(d, docs[d][0], docs[d][1], docs[d][2][:SNIPPET], rerank.get(d), fused_score[d])
@@ -162,9 +183,12 @@ class Pipeline:
         ]
         return SearchResult(hits, routed, self.cfg.describe(), t), cost
 
-    def answer(self, question: str) -> AnswerResult:
+    def answer(self, question: str, emit: Emit | None = None) -> AnswerResult:
         start = time.perf_counter()
-        res, cost = self._search(question, k=10)
+        emit = emit or (lambda event, payload: None)
+        stages = (["route"] if self.cfg.router else []) + ["retrieve", "fuse"] + (["rerank"] if self.reranker else [])             + ["generate"] + (["verify"] if self.cfg.verify else [])
+        emit("start", {"question": question, "config": self.cfg.describe(), "stages": stages})
+        res, cost = self._search(question, k=10, emit=emit)
         ids = [h.doc_id for h in res.hits]
         docs = self.docs.get(ids)
         t = dict(res.seconds)
@@ -173,19 +197,30 @@ class Pipeline:
         gen = llm.generate(llm.client(), answerer.build_prompt(question, ids, docs, pairs))
         t["generate"] = round(time.perf_counter() - clock, 3)
         p = answerer.parse(gen.text, ids)
+        num = {d: n for n, d in enumerate(ids, 1)}
+        citations = [{"n": num[d], "doc_id": d, "source": docs[d][0], "title": docs[d][1]} for d in p.cited_doc_ids]
+        emit("generate", {
+            "answer": gen.text, "abstained": p.abstained, "partial": p.partial, "citations": citations,
+            "context": [{"n": num[d], "doc_id": d, "source": docs[d][0], "title": docs[d][1]} for d in ids],
+            "version_pairs": [{"a": num[a], "b": num[b], "cosine": round(c, 4)} for a, b, c in pairs],
+            "seconds": t["generate"], "cost_usd": round(0.0 if gen.cached else gen.cost, 6),
+        })
         confidence = None
         if self.cfg.verify and not p.abstained:
             clock = time.perf_counter()
             confidence, vcost = self._confidence(question, gen.text, ids, docs, pairs, res.hits)
             cost += vcost
             t["verify"] = round(time.perf_counter() - clock, 3)
+            emit("verify", {"confidence": confidence, "skipped": None, "seconds": t["verify"], "cost_usd": round(vcost, 6)})
+        elif self.cfg.verify:
+            emit("verify", {"confidence": None, "skipped": "abstained", "seconds": 0.0, "cost_usd": 0.0})
         t["total"] = round(time.perf_counter() - start, 3)
-        num = {d: n for n, d in enumerate(ids, 1)}
-        citations = [{"n": num[d], "doc_id": d, "source": docs[d][0], "title": docs[d][1]} for d in p.cited_doc_ids]
+        total_cost = round(cost + (0.0 if gen.cached else gen.cost), 6)
+        emit("done", {"seconds": t, "cost_usd": total_cost})
         return AnswerResult(
             answer=gen.text, citations=citations, abstained=p.abstained, partial=p.partial, context_doc_ids=ids,
             routed_sources=res.routed_sources, config=res.config,
-            cost_usd=round(cost + (0.0 if gen.cached else gen.cost), 6), seconds=t, confidence=confidence,
+            cost_usd=total_cost, seconds=t, confidence=confidence,
         )
 
     def _confidence(self, question, answer, ids, docs, pairs, hits) -> tuple[dict, float]:

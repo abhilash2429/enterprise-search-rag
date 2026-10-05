@@ -1,0 +1,75 @@
+[
+ {
+  "question_id": "qst_0147",
+  "question": "What is the planned cutoff date when the old model capability format may stop being accepted for new writes?",
+  "question_type": "basic",
+  "gold_answer": "The planned cutoff date is 2026-06-01, after which the legacy capability format (legacy_capabilities / capability_schema.v1) may be removed for new write operations.",
+  "expected_doc_ids": [
+   "dsid_cc9fd576760d4a058a896155657eff06"
+  ]
+ },
+ {
+  "question_id": "qst_0421",
+  "question": "Default TTL for the cross-account GPU warm-pool handoff handshake token?",
+  "question_type": "conflicting_info",
+  "gold_answer": "The handshake token now defaults to a 120-second TTL (2 minutes); the older runbook used a 180-second (3 minute) default.",
+  "expected_doc_ids": [
+   "dsid_b8ab9778e36543159da49dba3ad9c76d",
+   "dsid_9f2e6aa7f6c14b1db1c6f922a1d4b4d7"
+  ]
+ },
+ {
+  "question_id": "qst_0180",
+  "question": "In our rollout system, what is the name of the new mechanism that prevents a candidate release from getting full user traffic until a dry run with replayed requests and smoke checks has passed?",
+  "question_type": "semantic",
+  "gold_answer": "It's the **TrafficEscrow** (the **traffic_escrow** service), which escrows routing/commit promotion and only releases it after a rehearse run with replayed requests and smoke checks succeeds.",
+  "expected_doc_ids": [
+   "dsid_730ed8ee5fc84e0b9be761003b9a60d3"
+  ]
+ },
+ {
+  "question_id": "qst_0343",
+  "question": "What caused the savings $/day estimates in Optimization Suggestions beta to not match Arkadia Finance billing, and what UI or API changes should we make to prevent this confusion going forward?",
+  "question_type": "project_related",
+  "gold_answer": "Mismatch was primarily an expectation/reconciliation gap plus an estimator input gap. The Suggestions beta $/day is an estimated compute-cost delta derived from telemetry aggregates (GPU-sec/tokens) over a trailing baseline window (typically last 7d) with an explicit stale_as_of timestamp; it is not intended to match net invoiced totals. Arkadia compared the headline $/day to Billing export total_cost net of credits/committed-use discounts and with some initial local-time vs UTC day misalignment. Realized savings were further lower because caching was only rolled out to ~50% traffic for ~12 hours (so the first 24h window would be roughly ~25% of the full-adoption daily estimate) and because cache warm-up in the first 6-12+ hours reduced hit uplift versus the estimator steady-state assumption. Additionally, for Arkadia\u2019s Dedicated/VPC setup the estimator could not access effective contracted pricing (missing effective price feed / cost attribution gaps) and fell back to catalog/list token pricing (price_source=catalog_fallback / assumption), inflating the USD/day figure even when the percent savings remained directionally reasonable.\n\nTo prevent confusion:\nUI should explicitly label $/day as \"compute-cost estimate (not invoice total)\" and prominently display the baseline window and stale_as_of (with timezone). Promote \"assumes 100% of traffic for the shown scope\" out of the Assumptions section into a top-level callout, and offer a simple rollout/adoption scaling control (or show a scaled range) for canary/A-B rollouts. When price_source is catalog_fallback or effective pricing is unavailable (especially for Dedicated/Private), de-emphasize or suppress $/day and/or show a strong warning tooltip, and consider making % savings the primary sortable field. Add a \"How this matches billing\" link that explains discounts/credits, invoice-only line items, and recommends comparing against Console Usage Analytics \"Inference cost (compute)\" for apples-to-apples.\n\nAPI should surface pricing/assumption metadata needed for reconciliation: price_source (effective vs catalog_fallback/assumption), an explicit flag like savings_usd_uses_list_price, and the exact baseline window + stale_as_of used. Add an optional adoption_factor/scaled_savings field (or inputs to compute it client-side). Also downgrade/flag confidence when core pricing inputs are missing so we do not show Medium confidence while dollars are based on fallback pricing.",
+  "expected_doc_ids": [
+   "dsid_85ee9562e05d457b9e32785343777359",
+   "dsid_ae2e969d0b924ebbb19ab2f5d1b95125",
+   "dsid_fee94d81c032494cbfce8094468f0973"
+  ]
+ },
+ {
+  "question_id": "qst_0484",
+  "question": "What is the complete mapping of `billing_tag` \u2192 Finance GL code (and cost center owner) used for chargebacks in the Eval Budget Ledger, and where is that mapping source-of-truth maintained?",
+  "question_type": "info_not_found",
+  "gold_answer": "The answer must state at some point that the query is not fully answerable from available documents or caveat the provided information with why it does not fully address the query. The answer may present relevant and related information to be helpful to the user however it must clearly also mention that at least some aspects are not found or answered. The answer may also simply state that the query is not answerable from the documents, this is perfectly acceptable.",
+  "expected_doc_ids": []
+ },
+ {
+  "question_id": "qst_0459",
+  "question": "What was the deadline and time zone for paying into the office fantasy football playoff pickem?",
+  "question_type": "miscellaneous",
+  "gold_answer": "The payment deadline was set for 2026-03-05 at 17:00 UTC.",
+  "expected_doc_ids": [
+   "dsid_bb6f267d73a64a1b947a524dd602daa0"
+  ]
+ },
+ {
+  "question_id": "qst_0037",
+  "question": "What caused the spike in 502 and 503 errors on the embeddings endpoint for the us-east dedicated pool around March 13, 2026?",
+  "question_type": "basic",
+  "gold_answer": "The 502/503 spike was driven by API gateway backpressure and hedged retries amplifying load on the us-east dedicated pool (dsp-6), which led the serving runtime to exhaust its process/thread limits (pthread_create failures, SIGABRT exits). A recent increase to prefetch.window_size further increased work and contributed to the overload.",
+  "expected_doc_ids": [
+   "dsid_18621ce91fd14b408a2be95336bb4ab0"
+  ]
+ },
+ {
+  "question_id": "qst_0396",
+  "question": "After rotating a Hosted API key in the Console, why might the Usage \u2192 Ad-hoc Query still show request IDs tied to the old key and 'View trace' links that 404, and what immediate mitigation did Support/SRE apply before a proper fix shipped?",
+  "question_type": "constrained",
+  "gold_answer": "Because the Console Usage/Ad-hoc Query was serving stale/legacy cached usage rows and trace metadata keyed to the old api_key_id (not properly invalidated on rotation, with some pods still reading the legacy cache prefix), and the usage/trace indexing hadn't been remapped yet so generated trace anchors still referenced the old key, leading to trace lookups that 404. Support/SRE mitigated immediately by flushing the org's legacy Redis cache prefix and enabling a temporary console bypass so orgs with a recent rotation read live from the index instead of cache.",
+  "expected_doc_ids": [
+   "dsid_f90b68cdda834c6fb4c76508d359c72f"
+  ]
+ }
+]

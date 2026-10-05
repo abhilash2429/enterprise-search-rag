@@ -163,6 +163,9 @@ Every decision, its alternatives and the dev numbers behind it are logged in [do
 - Generator and judge are the same model (gpt-oss-120b). The judge is validated against hand labels, but scores are not
   comparable to the paper's GPT-5.4 leaderboard numbers.
 - The frontier agent ran one seed on dev only, with a different generator from the pipeline.
+- Abstention is fragile. The answerer refused 3 of 3 seeds on one info-not-found question in the batch runs, but answered
+  it when the online reranker swapped two near-tied documents (score drift up to 0.012 from a smaller rerank batch);
+  the verifier flagged that answer. Refusals depend on context order as well as content.
 - The confidence flag is evaluated against the gpt-oss judge's labels, which are themselves about 92% accurate, so some
   "false alarms" and "misses" are judge errors. It catches about 70% of wrong answers; the rest still look confident.
 - Both dense indexes were built from text prompts that vLLM did not end with EOS, while the Qwen3-Embedding model card
@@ -212,6 +215,18 @@ uv run entsearch-mcp --transport streamable-http --port 8000
 Claude Code: `claude mcp add entsearch -- uv run --directory /path/to/repo entsearch-mcp`. Indexes load in a background
 thread (about a minute), so the client connects at once and the first call waits for them.
 `scripts/check_pipeline.py` checks that the online pipeline returns the same top 10 as the batch runs and times each stage.
+
+### Demo API
+
+`entsearch-demo` serves the same pipeline over HTTP for the demo UI, streaming each stage (route, retrieve, fuse, rerank,
+answer, verify) as a server-sent event so the UI can show the pipeline working. Contract: [docs/demo-api.md](docs/demo-api.md).
+`web/fixtures/` holds real recorded runs of the demo questions (`scripts/record_demo_fixtures.py`), so the UI can be built
+and replayed without the indexes or a GPU.
+
+```bash
+uv sync --extra demo
+uv run entsearch-demo                      # http://127.0.0.1:8000/api
+```
 
 ## Reproduce
 
@@ -272,8 +287,11 @@ src/entsearch/
   docstore.py              SQLite doc store for serving
   serve/pipeline.py        online router -> hybrid -> rerank -> cited answer
   serve/server.py          MCP server (entsearch-mcp)
+  serve/demo.py            demo API with per-stage server-sent events (entsearch-demo)
+  verifier.py              answer verifier behind the confidence flag
 scripts/                   index builds, batch runs, ablations, reports (see Reproduce)
 tests/                     unit tests
+web/fixtures/              recorded demo API runs for the frontend's offline mode
 results/                   result tables for the baselines and near-dup studies
 docs/decisions.md          every design decision with its reason and numbers
 ```

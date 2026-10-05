@@ -414,6 +414,11 @@ dependencies = [
 ]
 
 [package.optional-dependencies]
+demo = [
+    { name = "sse-starlette" },
+    { name = "starlette" },
+    { name = "uvicorn" },
+]
 mcp = [
     { name = "mcp" },
 ]
@@ -446,11 +451,14 @@ requires-dist = [
     { name = "regex" },
     { name = "scipy" },
     { name = "sentence-transformers", specifier = ">=6.1.0" },
+    { name = "sse-starlette", marker = "extra == 'demo'", specifier = ">=3.5" },
+    { name = "starlette", marker = "extra == 'demo'", specifier = ">=1.7" },
     { name = "tiktoken" },
     { name = "torch", specifier = ">=2.11.0", index = "https://download.pytorch.org/whl/cu128" },
     { name = "tqdm" },
+    { name = "uvicorn", marker = "extra == 'demo'", specifier = ">=0.54" },
 ]
-provides-extras = ["mcp"]
+provides-extras = ["mcp", "demo"]
 
 [package.metadata.requires-dev]
 dev = [

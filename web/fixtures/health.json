@@ -1,0 +1,11 @@
+{
+ "status": "ready",
+ "busy": false,
+ "config": {
+  "router": true,
+  "rerank": true,
+  "dense": "fp16",
+  "verify": true
+ },
+ "error": null
+}

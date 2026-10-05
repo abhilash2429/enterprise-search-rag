@@ -31,9 +31,15 @@ dependencies = [
 mcp = [
     "mcp>=2.3,<3",
 ]
+demo = [
+    "sse-starlette>=3.5",
+    "starlette>=1.7",
+    "uvicorn>=0.54",
+]
 
 [project.scripts]
 entsearch-mcp = "entsearch.serve.server:main"
+entsearch-demo = "entsearch.serve.demo:main"
 
 [dependency-groups]
 dev = [
