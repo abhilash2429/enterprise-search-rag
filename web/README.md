@@ -4,7 +4,24 @@ Next.js (App Router, TypeScript strict, Tailwind) frontend for the demo API. The
 [docs/demo-api.md](../docs/demo-api.md); [fixtures/](fixtures/) holds real recorded runs of it, so the UI runs without the
 backend, its GPU or its indexes.
 
-Right now the page is bare: it lists the demo questions, and clicking one prints the raw event stream as it arrives.
+## The screen
+
+The UI follows the M-Rag-B frontend (github.com/abhilash2429/M-Rag-B): same layout, palette, Geist type and vendored
+prompt-kit / shadcn primitives in `components/ui/` (copied unchanged).
+
+- Left: the benchmark questions from `/questions`, and "New session" to clear the conversation.
+- Middle: a chat thread. Each answer shows the pipeline as it runs (Route, Retrieve, Fuse, Rerank, Generate, Verify,
+  each pending, running with a live timer, or done with its real seconds), the routed sources, total time and cost, and
+  the answer as markdown with citation chips. `[n]`, `[n][m]`, `[n, m]` and the backend's `【n】` form all become chips.
+  Banners for a refusal and a partial answer; the "Not covered by the documents:" sentence is set apart; version pairs
+  are noted; the confidence check sits under the answer ("Check the cited documents" with the verdict, reasoning and
+  unsupported claims when flagged, a quiet "Verified" line otherwise, and the low-retrieval note). "Why this answer"
+  expands the per-stage details.
+- Right: the evidence rail with the 10 reranked documents (rank, source with its colour, title, snippet, score, rank
+  before reranking, cited marker). While reranking runs it shows the top of the fused list. A citation chip highlights
+  and scrolls to its document; "Open document" shows the full text from `/documents/{id}`.
+
+`/raw` keeps the bare page that prints the raw event stream.
 
 ## Setup
 
@@ -85,6 +102,7 @@ type. `createClient()` exposes `getHealth`, `getQuestions`, `getDocument` and `a
 | `npm run lint` | ESLint (Next core-web-vitals and TypeScript rules) |
 | `npm run typecheck` | `next typegen` then `tsc --noEmit`, including the schema-equals-contract check |
 | `npm test` | Vitest |
+| `npm run e2e` | Every fixture end to end in headless Chromium against a running app (see below) |
 
 The tests run the client against the mock route handlers in process (no server, no browser): every recorded run replays
 through `ask` and each event parses into its type and equals the recorded payload, events follow the contract order,
@@ -92,3 +110,18 @@ replay pacing follows `t / NEXT_PUBLIC_MOCK_SPEED`, and every reranked hit's doc
 from the contract cover what no fixture does: a refusal (`generate.abstained: true`, `verify.skipped: "abstained"`,
 `confidence: null`), a run without router and verifier, an unparsed verifier reply, the server's `error` event, dropped
 and refused streams, the `/health` pre-check, contract drift and abort.
+
+### End-to-end check
+
+`e2e/run.mjs` drives the built app at 1920x1080: every recorded run (stage states and seconds, routed sources, total
+and cost, chips matching `generate.citations`, banners, version pairs, confidence, evidence order and cited marks, chip
+highlight and scroll, the document viewer), a synthetic refusal and an unknown question. Set the same speed for the
+server and the check:
+
+```bash
+NEXT_PUBLIC_MOCK_SPEED=10 npm run build && NEXT_PUBLIC_MOCK_SPEED=10 npm start    # shell 1
+NEXT_PUBLIC_MOCK_SPEED=10 npm run e2e                                             # shell 2
+```
+
+It needs a Chromium for Playwright (`npx playwright install chromium` once, or `PLAYWRIGHT_CHROMIUM_PATH`).
+`E2E_SHOTS=<dir>` saves a screenshot of each finished answer.
