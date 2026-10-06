@@ -10,7 +10,8 @@
     "typecheck": "next typegen && tsc --noEmit",
     "test": "vitest run",
     "e2e": "node e2e/run.mjs",
-    "e2e:video": "node e2e/record-video.mjs"
+    "e2e:video": "node e2e/record-video.mjs",
+    "e2e:screenshots": "node e2e/screenshots.mjs"
   },
   "dependencies": {
     "@base-ui/react": "^1.8.0",

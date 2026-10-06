@@ -1,14 +1,42 @@
 # enterprise-search-rag
 
-Retrieval-augmented question answering over a 512K-document synthetic company corpus, measured against a published benchmark,
-with every design choice ablated on a dev split and the final config run once on a held-out test split.
+Ask a question about a company's internal knowledge (Slack, email, tickets, docs, 512K documents in all) and get an answer where every claim cites the document it came from. When the documents don't hold the answer, it says so instead of guessing.
 
-- Benchmark: [EnterpriseRAG-Bench](https://huggingface.co/datasets/onyx-dot-app/EnterpriseRAG-Bench) (Onyx, arXiv 2605.05253, MIT). 511,958 docs from 9 sources (Slack, email, tickets, docs, ...), 500 questions in 10 types, split 150 dev / 350 test.
-- Pipeline: LLM source router, hybrid BM25 + dense retrieval fused with RRF, cross-encoder reranking, and a cited answerer that handles superseded document versions and abstains.
-- Held-out test, 350 questions, 3 generation seeds: combined score 67.9 against 47.7 for the paper's BM25 baseline, paired +20.1 [95% CI +15.7, +24.5]. Recall@10 82.2 against 70.2.
-- $0.0028 of generation per question. A frontier file agent (gpt-6-luna driving the benchmark's own bash agent) does no better on dev at 7.6x the cost.
-- The paper's BM25 baseline is reproduced exactly (recall@10 68.4 in every question type), and the LLM judge is validated against 100 blind hand labels (TPR 0.91, TNR 0.94).
-- Served as an MCP server with `search`, `answer` and `get_document` tools.
+I built it against a published benchmark, [EnterpriseRAG-Bench](https://huggingface.co/datasets/onyx-dot-app/EnterpriseRAG-Bench), so every design choice is backed by a number, and I ran the final system once on a held-out test split nobody tuned on.
+
+**Jump to:** [Results](#results) · [How it works](#how-it-works) · [MCP server](#mcp-server) · [Findings](#findings) · [Limitations](#limitations) · [Reproduce](#reproduce)
+
+## At a glance
+
+| | |
+|---|---|
+| Score on the 350-question held-out test | **67.9** vs **47.7** for the paper's BM25 baseline (+20.1, 95% CI +15.7 to +24.5) |
+| Recall@10 | **82.2** vs 70.2 |
+| Cost | **$0.0028** of generation per question. A frontier file agent does no better on dev at 7.6x the cost |
+| Trust checks | Paper's BM25 baseline reproduced exactly; LLM judge validated against 100 blind hand labels (TPR 0.91, TNR 0.94) |
+| Serving | MCP server (`search`, `answer`, `get_document`) and a streaming demo UI |
+
+## What it looks like
+
+An answer with its pipeline steps, citation chips, the version-conflict note and the verifier check. The right rail shows the 10 reranked documents, with where each one ranked before reranking.
+
+![Answer with citations and evidence](docs/images/answer.png)
+
+The Retrieval tab: every candidate's rank in BM25, dense, and both again restricted to the sources the router picked, fused with RRF. It shows what each retriever found that the other missed.
+
+![Retrieval breakdown across BM25 and dense search](docs/images/retrieval.png)
+
+The benchmark page renders the results tables from this README. A test fails if the two ever disagree.
+
+![Benchmark results page](docs/images/benchmark.png)
+
+The UI replays real recorded runs, so it works without the GPU or indexes: `cd web && npm ci && npm run dev`. Screenshots come from `npm run e2e:screenshots`.
+
+## The pipeline in one line
+
+**Route** (LLM picks 1 to 3 of 9 sources) → **Retrieve** (BM25 + dense, on all sources and on the routed ones) → **Fuse** (RRF) → **Rerank** (Qwen3 cross-encoder, top 100 to top 10) → **Answer** (cites every claim, prefers the newest version, abstains when unsupported) → **Verify** (a second model family checks each cited claim and sets a confidence flag)
+
+Details in [How it works](#how-it-works).
 
 ## Results
 
