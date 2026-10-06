@@ -4,7 +4,22 @@ Ask a question about a company's internal knowledge (Slack, email, tickets, docs
 
 I built it against a published benchmark, [EnterpriseRAG-Bench](https://huggingface.co/datasets/onyx-dot-app/EnterpriseRAG-Bench), so every design choice is backed by a number, and I ran the final system once on a held-out test split nobody tuned on.
 
-**Jump to:** [Results](#results) · [How it works](#how-it-works) · [MCP server](#mcp-server) · [Findings](#findings) · [Limitations](#limitations) · [Reproduce](#reproduce)
+## Contents
+
+- [At a glance](#at-a-glance)
+- [What it looks like](#what-it-looks-like)
+- [The pipeline in one line](#the-pipeline-in-one-line)
+- [Results](#results)
+  - [Held-out test (run once, config locked on dev)](#held-out-test-run-once-config-locked-on-dev)
+  - [Dev ablations](#dev-ablations)
+  - [Serving latency](#serving-latency)
+- [Findings](#findings)
+- [Limitations](#limitations)
+- [How it works](#how-it-works)
+- [MCP server](#mcp-server)
+  - [Demo API](#demo-api)
+- [Reproduce](#reproduce)
+- [Repo layout](#repo-layout)
 
 ## At a glance
 
